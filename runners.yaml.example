@@ -1,0 +1,52 @@
+# Bakery — GitHub Actions runner fleet config.
+# Copy to runners.yaml and edit. Secrets come from env vars — nothing sensitive lives here.
+#
+# This example is sized for an M1 Pro with 10 cores / 32 GB RAM. Adjust per-runner
+# resources to taste; the `plan` subcommand will flag over-budget fleets.
+#
+# Disk budget: `plan` validates CPU/memory but not disk. The goldens below total
+# ~450 GB on-host (2×180 GB macOS + 40 GB ubuntu + ~60 GB OCI cache for the
+# macos-tahoe-xcode image). Comfortable on 1 TB; tight on 512 GB.
+
+github:
+  org: my-org                    # GitHub org slug
+  token_env: GH_PAT              # env var holding a PAT with admin:org scope
+
+host:
+  reserve:
+    cpu: 2                       # cores left for the macOS host
+    memory_gb: 8                 # GB left for the macOS host
+
+runners:
+  # Unified macOS runner: iOS/Xcode + Android tooling in one golden. Apple's
+  # EULA caps macOS guests at 2 concurrent per host, so we bake both stacks
+  # together and let either slot pick up xcode or android jobs — no more
+  # stalls when the queue is lopsided. Paparazzi screenshot tests in
+  # particular are pinned here (linux-aarch64 layoutlib JNI doesn't exist).
+  # Bake with scripts/bake-macos.sh.
+  - name: macos
+    kind: macos
+    image: macos
+    count: 2
+    resources:
+      cpu: 3
+      memory_gb: 10
+      disk_gb: 180
+    labels: [self-hosted, macos, arm64, xcode, android]
+
+  # Linux runner for TS/Python/Rust + general JVM. Android deliberately routes
+  # to the macOS class (aapt2 is x86_64-only from Google; Paparazzi layoutlib
+  # has no linux-aarch64 JNI). Bake with scripts/bake-ubuntu.sh. Cheap to
+  # scale — Linux VMs are not EULA-capped.
+  - name: ubuntu
+    kind: linux
+    image: ubuntu
+    count: 1
+    resources:
+      cpu: 2
+      memory_gb: 4
+      disk_gb: 40
+    labels: [self-hosted, linux, arm64, node, python, rust]
+
+# Optional: pin an actions/runner release. Default is a recent stable.
+# runner_version: 2.329.0

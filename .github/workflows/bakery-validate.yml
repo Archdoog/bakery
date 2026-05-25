@@ -1,0 +1,29 @@
+name: Validate runners
+
+on:
+  workflow_dispatch:
+
+jobs:
+  ubuntu:
+    runs-on: [self-hosted, linux, arm64]
+    steps:
+      - run: |
+          uname -a
+          java -version
+          node --version
+          rustc --version
+          uv --version
+
+  xcode:
+    runs-on: [self-hosted, macos, arm64, xcode]
+    steps:
+      - run: |
+          sw_vers
+          xcodebuild -version
+
+  android-mac:
+    runs-on: [self-hosted, macos, arm64, android]
+    steps:
+      - run: |
+          sw_vers
+          "$ANDROID_HOME/platform-tools/adb" --version

@@ -1,0 +1,55 @@
+name: New golden class
+description: Propose a new golden VM class (toolchain) for bakery to support.
+labels: ["new-golden"]
+body:
+  - type: input
+    id: class-name
+    attributes:
+      label: Class name
+      description: What you'd call this class in `runners.yaml` (e.g. `ubuntu`, `macos`, `freebsd`).
+      placeholder: ubuntu-rust-nightly
+    validations:
+      required: true
+  - type: dropdown
+    id: kind
+    attributes:
+      label: Guest OS
+      options:
+        - linux
+        - macos
+    validations:
+      required: true
+  - type: textarea
+    id: base-image
+    attributes:
+      label: Base OCI image
+      description: |
+        The Tart image you'd clone from (e.g. `ghcr.io/cirruslabs/ubuntu:latest`,
+        `ghcr.io/cirruslabs/macos-tahoe-xcode:latest`). Include why this base — Apple
+        EULA, aarch64 availability, etc.
+    validations:
+      required: true
+  - type: textarea
+    id: toolchain
+    attributes:
+      label: Toolchain to bake in
+      description: |
+        What `scripts/bake/<name>-install.sh` would install. Pin versions where you can —
+        unpinned tools have bitten us before (Node corepack, iOS simulator runtime, etc.).
+    validations:
+      required: true
+  - type: textarea
+    id: labels
+    attributes:
+      label: Workflow labels
+      description: Labels this class should advertise so workflows can target it.
+      placeholder: "[self-hosted, linux, arm64, rust-nightly]"
+    validations:
+      required: true
+  - type: textarea
+    id: constraints
+    attributes:
+      label: Known constraints
+      description: |
+        EULA caps, aarch64 toolchain gaps (e.g. Google's aapt2 is x86_64-only),
+        nested-virt requirements (Android emulator on M3+), disk footprint estimates.

@@ -1,0 +1,34 @@
+name: Bug report
+description: Something in bakery isn't doing what its docs claim.
+labels: ["bug"]
+body:
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: What you ran, what you expected, what you got instead.
+      placeholder: |
+        I ran `bakery up macos-1` and …
+    validations:
+      required: true
+  - type: textarea
+    id: plan-output
+    attributes:
+      label: `bakery plan` output
+      description: Run `bakery plan` and paste the full output. This pins down host resources + planned fleet.
+      render: shell
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant logs
+      description: |
+        Tail of `logs/<vm>.log`, any `[name] FAILED:` line from the CLI, and (if it got that far) the
+        in-guest `~/actions-runner/_diag/Runner_*.log`.
+      render: shell
+  - type: input
+    id: versions
+    attributes:
+      label: bakery / tart / macOS versions
+      placeholder: "bakery 0.2.0, tart 2.x, macOS 14.5 (M2 Pro)"
+    validations:
+      required: true

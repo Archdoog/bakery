@@ -1,0 +1,17 @@
+# Runtime state (PIDs, logs, per-runner metadata)
+state/
+logs/
+
+# Local config (may contain org/repo names or labels you don't want to share)
+runners.yaml
+runners.json
+
+# Rust build artifacts
+target/
+Cargo.lock.bak
+
+# Stray
+firebase-debug.log
+.DS_Store
+
+.claude/worktrees
