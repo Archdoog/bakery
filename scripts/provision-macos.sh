@@ -44,18 +44,22 @@ rm -f .runner* .credentials*
 # actions-runner runs $ACTIONS_RUNNER_HOOK_JOB_COMPLETED after every job. We
 # use it to evict the parts of the workspace that bloat fastest: GHA's own
 # _temp scratch, stale _actions/_diag files, and Xcode caches that regenerate
-# cheaply. Tool caches (Homebrew, ~/Library/Caches/CocoaPods,
-# ~/.gradle/caches) are deliberately untouched — those are what make
-# self-hosted faster than macos-latest. Simulator devices are also left
-# alone: tart clones preserve mtimes, so a >7d-old golden's bake-created
-# devices look identical to test detritus to `find -mtime`, and reaping
-# them broke iOS CI. Whole-VM resets come from `bakery recycle`.
+# cheaply. DerivedData is reaped in every known location — not just Xcode's
+# default, since projects routinely point `-derivedDataPath` elsewhere — and a
+# disk-pressure floor escalates to an aggressive sweep when a runner fills
+# mid-week. Tool caches (Homebrew, ~/Library/Caches/CocoaPods, ~/.gradle/caches)
+# are deliberately untouched — those are what make self-hosted faster than
+# macos-latest. Simulator devices are also left alone: tart clones preserve
+# mtimes, so a >7d-old golden's bake-created devices look identical to test
+# detritus to `find -mtime`, and reaping them broke iOS CI. Whole-VM resets
+# come from `bakery recycle`.
 HOOK_DIR="$RUNNER_DIR/runner-hooks"
 mkdir -p "$HOOK_DIR"
 cat >"$HOOK_DIR/job-completed.sh" <<'HOOK'
 #!/bin/bash
-# Conservative per-job cleanup. Errors are non-fatal — the runner agent
-# treats a non-zero hook exit as a job failure, which we never want here.
+# Conservative per-job cleanup with a disk-pressure safety net. Errors are
+# non-fatal — the runner agent treats a non-zero hook exit as a job failure,
+# which we never want here.
 set -u
 RUNNER_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 WORK="$RUNNER_ROOT/_work"
@@ -65,13 +69,47 @@ find "$WORK/_actions" -mindepth 1 -maxdepth 3 -type d -mtime +7 \
     -exec rm -rf {} + 2>/dev/null || true
 find "$RUNNER_ROOT/_diag" -type f -mtime +7 -delete 2>/dev/null || true
 
+# DerivedData defaults to Xcode's location, but projects routinely point
+# `xcodebuild -derivedDataPath` elsewhere (~/.derived-data is a common choice,
+# and some keep it inside the checkout). A path the hook doesn't know about
+# grows unbounded until the disk fills mid-week. Reap across every known root;
+# operators can name extra roots via RUNNER_DERIVED_DATA_DIRS (colon-separated)
+# in the runner's .env.
+DD_DIRS=(
+  "$HOME/Library/Developer/Xcode/DerivedData"
+  "$HOME/.derived-data"
+)
+if [ -n "${RUNNER_DERIVED_DATA_DIRS:-}" ]; then
+  IFS=':' read -r -a _extra <<< "$RUNNER_DERIVED_DATA_DIRS"
+  DD_DIRS+=("${_extra[@]}")
+fi
+
 # Xcode ModuleCache regenerates from headers on next build — safe to drop.
 # DerivedData entries older than a week are almost always for branches the
 # runner won't see again; keep recent ones for incremental build wins.
-DD="$HOME/Library/Developer/Xcode/DerivedData"
-rm -rf "$DD/ModuleCache.noindex" 2>/dev/null || true
-find "$DD" -mindepth 1 -maxdepth 1 -type d -mtime +7 \
-    -exec rm -rf {} + 2>/dev/null || true
+for DD in "${DD_DIRS[@]}"; do
+  [ -n "$DD" ] && [ -d "$DD" ] || continue
+  rm -rf "$DD/ModuleCache.noindex" 2>/dev/null || true
+  find "$DD" -mindepth 1 -maxdepth 1 -type d -mtime +7 \
+      -exec rm -rf {} + 2>/dev/null || true
+done
+
+# Safety net: age-based reaping keeps caches warm but can't react to a runner
+# that fills mid-week (a fat custom -derivedDataPath, a runaway artifact). If
+# free space falls below the floor, escalate — drop ALL DerivedData regardless
+# of age, plus any DerivedData dirs living inside the checkout. A cold rebuild
+# is far cheaper than "No space left on device" failing every later job. Tune
+# the floor with RUNNER_DISK_MIN_FREE_GB (default 15).
+MIN_FREE_GB="${RUNNER_DISK_MIN_FREE_GB:-15}"
+FREE_GB="$(df -g / 2>/dev/null | awk 'NR==2 {print $4}')"
+if [ -n "$FREE_GB" ] && [ "$FREE_GB" -lt "$MIN_FREE_GB" ]; then
+  echo "[hook] free ${FREE_GB}G < ${MIN_FREE_GB}G floor — aggressive DerivedData sweep"
+  for DD in "${DD_DIRS[@]}"; do
+    [ -n "$DD" ] && [ -d "$DD" ] || continue
+    find "$DD" -mindepth 1 -maxdepth 1 -exec rm -rf {} + 2>/dev/null || true
+  done
+  find "$WORK" -type d -name DerivedData -prune -exec rm -rf {} + 2>/dev/null || true
+fi
 
 df -h / 2>/dev/null | awk 'NR==2 {printf "[hook] disk: %s used of %s (%s)\n",$3,$2,$5}'
 exit 0
