@@ -57,10 +57,36 @@ fn which(exe: &str) -> Option<PathBuf> {
         .find(|p| p.is_file())
 }
 
-/// Poll SSH until the guest accepts a connection. `tart ip` returns as soon
-/// as DHCP hands out the address, which is well before sshd is up.
+/// Poll SSH until the guest *reliably* accepts authenticated connections.
+/// `tart ip` returns as soon as DHCP hands out the address — well before sshd
+/// is up, and on a cold macOS clone well before `opendirectory` can actually
+/// authenticate the guest password.
+///
+/// Two hazards shape the loop:
+///   - While the guest is half-up, password auth fails. OpenSSH 9.8+ (shipped
+///     in current macOS) enables `PerSourcePenalties`, so each failed attempt
+///     jails *this host's* IP for an escalating interval — and tight retries
+///     dig the hole deeper, which is what makes the subsequent `scp` fail with
+///     "Permission denied" even once the guest is ready. So we back OFF after a
+///     failure to let any penalty decay, rather than hammering every 2s. (The
+///     golden also bakes `PerSourcePenalties no`, but this keeps already-baked
+///     goldens provisionable.)
+///   - sshd can accept one probe and then flap as auth subsystems settle, so a
+///     single success doesn't mean provisionable. We require `READY_STREAK`
+///     consecutive successes before returning Ok.
 pub fn wait_for_ssh(host: &str, user: &str, password: &str, timeout_s: u64) -> Result<()> {
+    // Consecutive OK probes required before we trust the guest for scp.
+    const READY_STREAK: u32 = 3;
+    // Gap between probes while building a streak (guest already looks healthy).
+    const OK_GAP: Duration = Duration::from_secs(3);
+    // Backoff after a failed probe: start here, double up to the cap. Slow
+    // retries keep us from re-arming PerSourcePenalties on the host IP.
+    const FAIL_BACKOFF_START_S: u64 = 8;
+    const FAIL_BACKOFF_MAX_S: u64 = 30;
+
     let deadline = Instant::now() + Duration::from_secs(timeout_s);
+    let mut streak = 0u32;
+    let mut fail_backoff = FAIL_BACKOFF_START_S;
     while Instant::now() < deadline {
         let ok = Command::new("sshpass")
             .args(["-p", password, "ssh"])
@@ -70,9 +96,18 @@ pub fn wait_for_ssh(host: &str, user: &str, password: &str, timeout_s: u64) -> R
             .status()
             .is_ok_and(|s| s.success());
         if ok {
-            return Ok(());
+            streak += 1;
+            if streak >= READY_STREAK {
+                return Ok(());
+            }
+            // Recovered — reset the penalty backoff for any future stumble.
+            fail_backoff = FAIL_BACKOFF_START_S;
+            sleep(OK_GAP);
+        } else {
+            streak = 0;
+            sleep(Duration::from_secs(fail_backoff));
+            fail_backoff = (fail_backoff * 2).min(FAIL_BACKOFF_MAX_S);
         }
-        sleep(Duration::from_secs(2));
     }
     Err(ProvisionError::Timeout {
         host: host.into(),
@@ -100,7 +135,9 @@ pub fn provision(args: ProvisionArgs<'_>) -> Result<()> {
         return Err(ProvisionError::ScriptMissing(script));
     }
 
-    wait_for_ssh(args.host, args.user, args.password, 180)?;
+    // Cold macOS clones can flap auth for several minutes; the backoff in
+    // wait_for_ssh needs headroom beyond the old 180s to ride that out.
+    wait_for_ssh(args.host, args.user, args.password, 300)?;
 
     let remote_path = format!("/tmp/provision-{}.sh", args.kind);
     scp(
