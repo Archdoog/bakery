@@ -43,6 +43,25 @@ command -v xcodebuild >/dev/null \
 command -v brew >/dev/null \
   || { echo "brew missing — expected on a Cirrus macos-tahoe-xcode golden" >&2; exit 1; }
 
+# ---- sshd: disable PerSourcePenalties (cold-clone provisioning races) -------
+# OpenSSH 9.8+ (shipped in this macOS) penalizes a source IP after failed auth
+# attempts. A freshly stamped clone accepts SSH connections before
+# `opendirectory` is ready to authenticate, so bakery's provisioning probes
+# fail during that window and jail the host's IP — making the real `scp` fail
+# with "Permission denied" even after the guest is up. These are ephemeral CI
+# guests on a private vmnet, so the penalty buys no security. Bake it off so
+# every clone is provisionable the moment auth comes up. Written both as a
+# drop-in and (idempotently) in the main config so it takes effect whether or
+# not sshd_config Includes the drop-in dir; both set "no", so precedence is moot.
+echo ">>> disabling sshd PerSourcePenalties (cold-clone provisioning races)"
+sudo mkdir -p /etc/ssh/sshd_config.d
+printf 'PerSourcePenalties no\n' \
+  | sudo tee /etc/ssh/sshd_config.d/99-bakery-no-penalty.conf >/dev/null
+if ! sudo grep -qE '^[[:space:]]*PerSourcePenalties[[:space:]]+no' /etc/ssh/sshd_config 2>/dev/null; then
+  printf '\nPerSourcePenalties no\n' | sudo tee -a /etc/ssh/sshd_config >/dev/null
+fi
+sudo sshd -t && echo ">>> sshd config OK" || echo ">>> WARN: sshd -t flagged the config"
+
 # ---- iOS simulator runtime -------------------------------------------------
 
 echo ">>> Xcode info"
