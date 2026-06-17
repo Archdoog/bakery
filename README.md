@@ -37,6 +37,21 @@ bakery build macos       # ~25-40 min, ~12 GB (iOS 18 runtime alone is 8 GB)
 Add a new golden: drop `scripts/bake-<name>.sh` + `scripts/bake/<name>-install.sh`;
 `bakery build <name>` picks it up.
 
+### Bumping a tool version (e.g. Xcode)
+
+Tool versions live in the bake scripts — Xcode comes from the Cirrus base image
+(`BAKE_SOURCE` in `scripts/bake-macos.sh`, default `…macos-tahoe-xcode:latest`),
+others from `scripts/bake/<name>-install.sh` (e.g. `IOS_RUNTIME_VERSION`). Pin
+the version, re-bake, then re-clone the runners:
+
+```sh
+# Xcode 26.5 (Cirrus publishes a matching tag):
+BAKE_SOURCE=ghcr.io/cirruslabs/macos-tahoe-xcode:26.5 tart delete macos; bakery build macos
+bakery recycle macos     # re-stamp runners from the new golden
+```
+
+Edit the script default if the bump is permanent rather than a one-off.
+
 ## Up, down, status
 
 ```sh
