@@ -14,6 +14,45 @@ RUNNER_DIR="$HOME/actions-runner"
 mkdir -p "$RUNNER_DIR"
 cd "$RUNNER_DIR"
 
+# Keep the guest clock tight against NTP — must happen before config.sh hits
+# the network. Tart/VZ guests drift while the host sleeps or the VM is paused;
+# on resume the clock can sit minutes-to-hours behind real time. The runner
+# mints its OAuth token stamped with the *local* clock, so a behind-clock guest
+# presents a token GitHub's vstoken endpoint sees as already-expired ->
+# HTTP BadRequest, the broker session never opens, the listener crash-loops,
+# and GitHub eventually deletes the registration ("not connected recently").
+# macOS "Network Time: On" alone does NOT re-sync promptly across a VM resume
+# (we have observed ~3h skew with it enabled), so we (a) force a step-sync now,
+# before registration, and (b) install a LaunchDaemon that re-steps every 5 min
+# to bound drift between jobs. Override the server via BAKERY_NTP_SERVER.
+NTP_SERVER="${BAKERY_NTP_SERVER:-time.apple.com}"
+sudo systemsetup -setnetworktimeserver "$NTP_SERVER" >/dev/null 2>&1 || true
+sudo systemsetup -setusingnetworktime on             >/dev/null 2>&1 || true
+sudo /usr/bin/sntp -sS "$NTP_SERVER"                 >/dev/null 2>&1 || true
+
+sudo tee /Library/LaunchDaemons/com.bakery.timesync.plist >/dev/null <<PLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.bakery.timesync</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/usr/bin/sntp</string>
+    <string>-sS</string>
+    <string>${NTP_SERVER}</string>
+  </array>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>StartInterval</key>
+  <integer>300</integer>
+</dict>
+</plist>
+PLIST
+sudo launchctl bootout   system /Library/LaunchDaemons/com.bakery.timesync.plist 2>/dev/null || true
+sudo launchctl bootstrap system /Library/LaunchDaemons/com.bakery.timesync.plist 2>/dev/null || true
+
 if [[ ! -x ./config.sh ]]; then
   curl -fsSL -o runner.tar.gz \
     "https://github.com/actions/runner/releases/download/v${VERSION}/actions-runner-osx-arm64-${VERSION}.tar.gz"
