@@ -18,7 +18,7 @@ set -euo pipefail
 echo ">>> apt base packages"
 sudo DEBIAN_FRONTEND=noninteractive apt-get update -qq
 sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq \
-  apt-transport-https build-essential ca-certificates cmake curl git gpg \
+  apt-transport-https build-essential ca-certificates cmake curl ethtool git gpg \
   libclang-dev libssl-dev lsb-release pkg-config protobuf-compiler \
   python-is-python3 unzip wget zip
 

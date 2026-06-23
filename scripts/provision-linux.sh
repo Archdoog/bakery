@@ -14,6 +14,53 @@ RUNNER_DIR="$HOME/actions-runner"
 mkdir -p "$RUNNER_DIR"
 cd "$RUNNER_DIR"
 
+# --- reliable egress behind vmnet NAT ---
+# Tart guests sit behind macOS vmnet's NAT. Two properties of that path silently
+# truncate large TLS responses, which surface to callers as "Premature close"
+# rather than a clean error:
+#   - virtio segmentation offloads (tso/gso/gro/lro) hand oversized segments to a
+#     NIC that mis-handles them under NAT, and
+#   - the effective path MTU can be below the guest's default 1500 (e.g. when the
+#     host is on a VPN), with PMTU discovery black-holed.
+# Small requests/replies pass, so plain curl looks fine while real work breaks —
+# e.g. firebase-tools' OAuth token POST to www.googleapis.com fails to refresh
+# and `firebase deploy` aborts with "Failed to authenticate". A boot-time oneshot
+# (also run now) disables the offloads and clamps MTU on the default-route
+# interface, named generically so it survives enpXsY renames across hosts.
+# Installed here (not only in the golden) so existing goldens pick it up on the
+# next `bakery` provision without a full re-bake.
+sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq ethtool >/dev/null 2>&1 || true
+sudo tee /usr/local/sbin/nic-tune.sh >/dev/null <<'NICTUNE'
+#!/bin/bash
+set -u
+IFACE="$(ip route show default | awk '{print $5; exit}')"
+[ -n "$IFACE" ] || exit 0
+# Offloads off is the primary fix; the MTU clamp is insurance for low-PMTU paths.
+# 1400 is conservative and adjustable — lower it (e.g. 1280) if a host's tunnel
+# has a smaller path MTU.
+ethtool -K "$IFACE" tso off gso off gro off lro off 2>/dev/null || true
+ip link set dev "$IFACE" mtu 1400 2>/dev/null || true
+NICTUNE
+sudo chmod +x /usr/local/sbin/nic-tune.sh
+sudo tee /etc/systemd/system/nic-tune.service >/dev/null <<'NICUNIT'
+[Unit]
+Description=Tune guest NIC for vmnet NAT egress (disable offloads, clamp MTU)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/nic-tune.sh
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target
+NICUNIT
+# enable --now both installs the boot hook and applies it immediately, so the
+# current provision (and the runner about to start) gets working egress.
+sudo systemctl daemon-reload || true
+sudo systemctl enable --now nic-tune.service || true
+
 if [[ ! -x ./config.sh ]]; then
   curl -fsSL -o runner.tar.gz \
     "https://github.com/actions/runner/releases/download/v${VERSION}/actions-runner-linux-arm64-${VERSION}.tar.gz"
