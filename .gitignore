@@ -6,6 +6,9 @@ logs/
 runners.yaml
 runners.json
 
+# Local secrets sourced by scripts/nightly-recycle.sh (e.g. GH_PAT)
+.env
+
 # Rust build artifacts
 target/
 Cargo.lock.bak

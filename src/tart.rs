@@ -183,6 +183,17 @@ fn rotate_log_if_large(log_path: &Path) {
     let _ = std::fs::rename(log_path, &rotated);
 }
 
+/// `tart prune --entries caches --older-than <days>`: evict OCI/IPSW cache
+/// entries not accessed in the window. Local VMs are separate APFS clones and
+/// are unaffected; the only cost is a re-pull on the next bake.
+pub fn prune_caches(older_than_days: u32) -> Result<()> {
+    let days = older_than_days.to_string();
+    run(
+        "prune",
+        ["prune", "--entries", "caches", "--older-than", &days],
+    )
+}
+
 /// Best-effort stop; the VM may already be stopped.
 pub fn stop(name: &str) {
     let _ = Command::new("tart").args(["stop", name]).status();

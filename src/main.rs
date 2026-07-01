@@ -89,6 +89,7 @@ enum Cmd {
     },
     /// Destroy and re-create runners from their golden — wipes accumulated
     /// _work, caches, and DerivedData. Equivalent to `down --destroy` + `up`.
+    /// Prunes the tart OCI cache when `host.cache_retention_days` is set.
     Recycle {
         /// Runner or group names (default: all)
         names: Vec<String>,
@@ -439,10 +440,20 @@ fn cmd_down(cfg: &FleetConfig, only: Option<HashSet<String>>, destroy: bool) -> 
 /// Destroy each target VM and re-create it from its golden. Resets
 /// `_work/`, tool caches, and any in-VM cruft accumulated since the last
 /// recycle — the bulk-disk-cleanup answer that pairs with the per-job hook.
+/// Also evicts stale tart OCI/IPSW cache entries when the config opts in.
 fn cmd_recycle(cfg: &FleetConfig, only: Option<HashSet<String>>, force: bool) -> Result<u8> {
     let rc = cmd_down(cfg, only.clone(), true)?;
     if rc != 0 {
         return Ok(rc);
+    }
+    // Prune while the VMs are down: the freed space is available before the
+    // re-cloned runners start growing again. Non-fatal — a failed prune
+    // shouldn't leave the fleet offline.
+    if let Some(days) = cfg.host.cache_retention_days {
+        println!("[host] pruning tart caches not accessed in {days} days");
+        if let Err(e) = tart::prune_caches(days) {
+            println!("[host] cache prune warning: {e}");
+        }
     }
     cmd_up(cfg, only, force)
 }

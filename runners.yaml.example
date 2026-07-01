@@ -16,6 +16,12 @@ host:
   reserve:
     cpu: 2                       # cores left for the macOS host
     memory_gb: 8                 # GB left for the macOS host
+  # On `recycle`, evict tart OCI/IPSW cache entries not accessed in N days
+  # (`tart prune --entries caches --older-than N`). The cache only speeds up
+  # re-pulls at bake time — goldens and runner VMs are never touched — but it
+  # can silently hold 60-80 GB after a couple of image bumps. Omit to keep
+  # the cache forever.
+  cache_retention_days: 5
 
 runners:
   # Unified macOS runner: iOS/Xcode + Android tooling in one golden. Apple's
