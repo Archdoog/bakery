@@ -83,7 +83,28 @@ mechanisms keep that bounded:
 - **`bakery recycle`** for the bulk reset. Tart clones are CoW so destroying
   + re-cloning a runner takes ~30–60s and gives you a clean VM identical to
   the golden. Run it nightly via `cron`/`launchd` when the queue is idle,
-  or on demand when a runner reports disk pressure.
+  or on demand when a runner reports disk pressure. Note the in-guest hook
+  above can't return space to the *host*: once a clone diverges from its
+  golden, those blocks stay allocated until the VM is re-cloned — recycle is
+  what keeps the host disk bounded.
+- **Tart cache prune.** The OCI/IPSW cache under `~/.tart/cache` only speeds
+  up re-pulls at bake time, but a couple of image bumps can leave 60–80 GB
+  behind. Set `host.cache_retention_days` in `runners.yaml` (see the example)
+  and `recycle` will run `tart prune --entries caches --older-than N` while
+  the fleet is down. Goldens and runner VMs are never touched.
+
+### Nightly recycle via launchd
+
+```sh
+scripts/nightly-recycle.sh --install          # daily at 03:30
+scripts/nightly-recycle.sh --install 02:00    # custom time
+```
+
+Installs a LaunchAgent that runs `bakery recycle` from this repo root,
+logging to `logs/nightly-recycle.log`. launchd doesn't inherit your shell
+environment, so put the PAT in `.env` at the repo root (gitignored):
+`export GH_PAT=ghp_...`. Remove the agent with
+`launchctl bootout gui/$(id -u)/dev.bakery.nightly-recycle`.
 
 ## Updating after `git pull`
 

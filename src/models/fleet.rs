@@ -35,6 +35,12 @@ impl Default for Reserve {
 pub struct HostSection {
     #[serde(default)]
     pub reserve: Reserve,
+    /// When set, `recycle` runs `tart prune --entries caches --older-than N`
+    /// to evict OCI/IPSW cache entries not accessed in N days. The cache only
+    /// exists to speed up re-pulls at bake time; goldens and runner VMs are
+    /// independent local clones and are never touched by the prune.
+    #[serde(default)]
+    pub cache_retention_days: Option<u32>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
