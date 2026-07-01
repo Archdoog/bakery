@@ -67,6 +67,38 @@ Same on `down` and `recycle`.
 
 Verify on GitHub → **Org → Settings → Actions → Runners** — should show Idle.
 
+## Surviving sleep (daily drivers)
+
+Sleep suspends the VMs and the runner agents drop offline, so a laptop host
+needs `bakery up` re-run after every wake. Install the launchd agent once and
+it happens automatically:
+
+```sh
+export GH_PAT=ghp_...        # captured into state/service.env (chmod 600)
+bakery service install       # from the repo root
+bakery service status        # loaded? last run? tail of logs/service.log
+bakery service uninstall     # removes the agent, plist, and env file
+```
+
+The agent re-runs `bakery up` at login, on screen unlock, and every 5 minutes
+(`--interval` to change) — launchd coalesces intervals missed during sleep
+into one run at wake, so the fleet phones back in within seconds of the lid
+opening. Since `up` is idempotent, a pass over a healthy fleet is a <5s no-op
+and never disturbs a runner mid-job. Each run retries up to 3 times, 15s
+apart, to ride out Wi-Fi reassociation after wake.
+
+Notes:
+
+- The PAT lives in `state/service.env` (gitignored, 0600), sourced at run
+  time — it never enters the plist. Rotate it by re-running
+  `bakery service install` with the new value exported.
+- The plist pins the absolute path of the `bakery` binary and repo root at
+  install time; re-run `bakery service install` after `cargo install --path .`
+  or after moving the repo.
+- macOS will show a "Background Items Added" notification on first install
+  (System Settings → General → Login Items & Extensions → `bakery`).
+- `up` output lands in `logs/service.log`.
+
 ## Disk hygiene
 
 Self-hosted runners persist `_work/` across jobs, so build outputs, action
