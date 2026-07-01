@@ -7,12 +7,14 @@
 //!   bakery recycle [NAME...] [--force]
 //!   bakery status
 //!   bakery build [IMAGE] [--as NAME]
+//!   bakery service <install|uninstall|status>
 
 mod config;
 mod github;
 mod host;
 mod models;
 mod provision;
+mod service;
 mod tart;
 
 use std::collections::HashSet;
@@ -106,6 +108,25 @@ enum Cmd {
         #[arg(long = "as")]
         as_name: Option<String>,
     },
+    /// Manage the launchd agent that re-runs `up` at login/unlock/interval.
+    Service {
+        #[command(subcommand)]
+        cmd: ServiceCmd,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+enum ServiceCmd {
+    /// Install (or refresh) the LaunchAgent; run from the repo root.
+    Install {
+        /// Watchdog interval in seconds; missed intervals fire once on wake
+        #[arg(long, default_value_t = 300)]
+        interval: u64,
+    },
+    /// Unload the LaunchAgent and remove its plist + env file.
+    Uninstall,
+    /// Show whether the agent is loaded plus the tail of its log.
+    Status,
 }
 
 fn main() -> ExitCode {
@@ -124,6 +145,12 @@ fn main() -> ExitCode {
             load_cfg(&cli.config).and_then(|c| cmd_recycle(&c, names_filter(&names), force))
         }
         Cmd::Status => load_cfg(&cli.config).and_then(|_| cmd_status()),
+        Cmd::Service { cmd } => match cmd {
+            ServiceCmd::Install { interval } => load_cfg(&cli.config)
+                .and_then(|c| service::install(&cli.config, &c.github.token_env, interval)),
+            ServiceCmd::Uninstall => service::uninstall(),
+            ServiceCmd::Status => service::status(),
+        },
     };
     match rc {
         Ok(code) => ExitCode::from(code),
