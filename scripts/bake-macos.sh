@@ -20,16 +20,20 @@
 #
 # Env overrides:
 #   BAKE_SOURCE          source OCI/local name (default ghcr.io/cirruslabs/macos-tahoe-xcode:latest)
-#   IOS_RUNTIME_VERSION  iOS simulator runtime to add (default 18.5)
+#   IOS_RUNTIME_VERSION  iOS simulator runtime to add for Maestro (default 18.5)
+#   IOS_SNAPSHOT_RUNTIME_VERSION  iOS runtime for the iOS-V3 iPhone 17 Pro Max
+#                        snapshot/XCUITest device (default 26.5) — must match the
+#                        repo's `(x.y)` test destination
 #   BAKE_CPU             cores during bake (default 6)
 #   BAKE_MEM_MB          memory during bake, MB (default 12288)
-#   BAKE_DISK_GB         disk size for the golden (default 180 — iOS runtime +8GB, Android SDK +4GB)
+#   BAKE_DISK_GB         disk size for the golden (default 180 — two iOS runtimes +16GB, Android SDK +4GB)
 set -euo pipefail
 
 readonly HERE="$(cd "$(dirname "$0")" && pwd)"
 readonly SOURCE_IMAGE="${BAKE_SOURCE:-ghcr.io/cirruslabs/macos-tahoe-xcode:latest}"
 readonly DEST_NAME="${1:-macos}"
 readonly IOS_RUNTIME_VERSION="${IOS_RUNTIME_VERSION:-18.5}"
+readonly IOS_SNAPSHOT_RUNTIME_VERSION="${IOS_SNAPSHOT_RUNTIME_VERSION:-26.5}"
 readonly BAKE_CPU="${BAKE_CPU:-6}"
 readonly BAKE_MEM_MB="${BAKE_MEM_MB:-12288}"
 readonly BAKE_DISK_GB="${BAKE_DISK_GB:-180}"
@@ -78,8 +82,8 @@ done
 echo ">>> copying installer"
 scp_to "$IP" "$INSTALL_SCRIPT" "/tmp/macos-install.sh"
 
-echo ">>> running installer (iOS $IOS_RUNTIME_VERSION runtime ~8GB + Android SDK ~3GB, 25-40 min)"
-ssh_run "$IP" "IOS_RUNTIME_VERSION='$IOS_RUNTIME_VERSION' chmod +x /tmp/macos-install.sh && /tmp/macos-install.sh"
+echo ">>> running installer (iOS $IOS_RUNTIME_VERSION + $IOS_SNAPSHOT_RUNTIME_VERSION runtimes ~16GB + Android SDK ~3GB, 30-50 min)"
+ssh_run "$IP" "IOS_RUNTIME_VERSION='$IOS_RUNTIME_VERSION' IOS_SNAPSHOT_RUNTIME_VERSION='$IOS_SNAPSHOT_RUNTIME_VERSION' chmod +x /tmp/macos-install.sh && /tmp/macos-install.sh"
 
 echo ">>> shutting guest down"
 ssh_run "$IP" "sudo shutdown -h now" || true
