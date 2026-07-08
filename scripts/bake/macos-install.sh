@@ -2,6 +2,9 @@
 # Runs inside a macOS aarch64 guest (cloned from macos-tahoe-xcode) during
 # `bake-macos.sh`. Layers on top of the stock Cirrus Xcode image:
 #   - iOS simulator runtime $IOS_RUNTIME_VERSION (default 18.5) + iPhone 16 device
+#     (Maestro), plus a warm iPhone 17 Pro Max on the pinned iOS
+#     $IOS_SNAPSHOT_RUNTIME_VERSION (default 26.5) runtime (Rallista-iOS-V3
+#     snapshot + XCUITest CI target)
 #   - Temurin JDK 21 (Homebrew cask)
 #   - Android cmdline-tools + platform-tools + platforms;android-34 + build-tools;34.0.0
 #   - Android emulator + arm64-v8a system image (API 34)
@@ -34,6 +37,12 @@ set -euo pipefail
 eval "$(/opt/homebrew/bin/brew shellenv 2>/dev/null)" || true
 
 IOS_RUNTIME_VERSION="${IOS_RUNTIME_VERSION:-18.5}"
+# Exact iOS runtime Rallista-iOS-V3 records snapshots on and runs XCUITests on.
+# Pinned to a full point release (not just "26") so the golden is deterministic:
+# CI targets `iPhone 17 Pro Max (26.5)`, so this must be the 26.5 runtime, not
+# whatever 26.x Xcode happens to bundle. Bumping it here and in the repo's
+# Fastfile destination is a two-line, coordinated change.
+IOS_SNAPSHOT_RUNTIME_VERSION="${IOS_SNAPSHOT_RUNTIME_VERSION:-26.5}"
 ANDROID_HOME="${ANDROID_HOME:-$HOME/Library/Android/sdk}"
 ANDROID_NDK_VERSION="${ANDROID_NDK_VERSION:-26.2.11394342}"
 CMDLINE_TOOLS_BUILD="${CMDLINE_TOOLS_BUILD:-11076708}"
@@ -75,43 +84,128 @@ echo ">>> downloading iOS $IOS_RUNTIME_VERSION simulator runtime (~8GB, 15-25 mi
 # ships as a signed distribution, no Apple ID needed.
 xcodebuild -downloadPlatform iOS -buildVersion "$IOS_RUNTIME_VERSION"
 
+# Pin the exact iOS $IOS_SNAPSHOT_RUNTIME_VERSION runtime for the iOS-V3 CI
+# device. No-op if the base Xcode already bundles it; otherwise downloads it.
+# NOTE: a runtime newer than the base Xcode's SDK is rejected — if this fails,
+# the golden's Xcode base image is too old for $IOS_SNAPSHOT_RUNTIME_VERSION;
+# bump BAKE_SOURCE to a newer macos-tahoe-xcode tag.
+echo ">>> downloading iOS $IOS_SNAPSHOT_RUNTIME_VERSION simulator runtime (iOS-V3 CI)"
+xcodebuild -downloadPlatform iOS -buildVersion "$IOS_SNAPSHOT_RUNTIME_VERSION"
+
 echo ">>> runtimes after"
 xcrun simctl list runtimes
 
-RUNTIME_ID=$(xcrun simctl list runtimes -j | /usr/bin/python3 -c "
+# ---- simulator devices (baked warm) ----------------------------------------
+# Two devices are baked so both mobile workloads land on a pinned, pre-created
+# target instead of an ad-hoc cold sim on first CI use:
+#   - iPhone 16 (iOS ${IOS_RUNTIME_VERSION})   — Maestro smoke tests. iOS 18
+#     sidesteps Maestro's iOS-26 app-tracking bug (see bake-macos.sh header).
+#   - iPhone 17 Pro Max (iOS ${IOS_SNAPSHOT_RUNTIME_VERSION}) — Rallista-iOS-V3
+#     snapshot + XCUITest CI. Its snapshot references are recorded on this exact
+#     device/OS, so we pin the full point release here and CI targets
+#     `iPhone 17 Pro Max (${IOS_SNAPSHOT_RUNTIME_VERSION})` — no drift either side.
+# Warm-booting each device once during the bake populates its data container
+# (SpringBoard first-run setup, the accessibility server, caches) into the
+# golden, so the first boot on a fresh clone comes up fast. That head start is
+# what keeps XCUITest's "AX loaded" handshake from timing out on a cold boot
+# under a resource-constrained guest — the failure mode this bake is tuned for.
+
+# Resolve an available iOS runtime identifier by version prefix ("18.5", "26.5").
+runtime_id_for() {
+    xcrun simctl list runtimes -j | /usr/bin/python3 -c "
 import json, sys
+prefix = sys.argv[1]
 runtimes = json.load(sys.stdin)['runtimes']
 match = next(
     (r for r in runtimes
      if r.get('isAvailable')
      and r.get('platform') == 'iOS'
-     and r.get('version', '').startswith('${IOS_RUNTIME_VERSION}')),
+     and r.get('version', '').startswith(prefix)),
     None,
 )
 if match is None:
-    sys.exit(f'no iOS ${IOS_RUNTIME_VERSION} runtime found among available runtimes')
+    sys.exit(f'no available iOS {prefix} runtime found')
 print(match['identifier'])
-")
-echo ">>> runtime id: $RUNTIME_ID"
+" "$1"
+}
 
-DEVICE_NAME="iPhone 16 (iOS ${IOS_RUNTIME_VERSION})"
-DEVICE_TYPE="com.apple.CoreSimulator.SimDeviceType.iPhone-16"
-
-# Idempotent create — if a prior bake ran the script, skip rather than duplicate.
-if ! xcrun simctl list devices -j | /usr/bin/python3 -c "
+# Resolve the UDID of the device named <name> *on runtime <runtime-id>* (empty
+# if absent). Scoped to the runtime because a bare name like "iPhone 17 Pro Max"
+# can exist on several runtimes at once (stock set + our pinned one); a
+# name-only lookup would be ambiguous and `simctl` would refuse to act on it.
+udid_on_runtime() {
+    xcrun simctl list devices -j | /usr/bin/python3 -c "
 import json, sys
-devices = json.load(sys.stdin)['devices']
-name = '${DEVICE_NAME}'
-sys.exit(0 if any(d.get('name') == name for v in devices.values() for d in v) else 1)
-" 2>/dev/null; then
-    echo ">>> creating simulator '$DEVICE_NAME'"
-    xcrun simctl create "$DEVICE_NAME" "$DEVICE_TYPE" "$RUNTIME_ID"
-else
-    echo ">>> simulator '$DEVICE_NAME' already exists, skipping create"
-fi
+rid, name = sys.argv[1], sys.argv[2]
+for d in json.load(sys.stdin)['devices'].get(rid, []):
+    if d.get('name') == name:
+        print(d.get('udid', '')); break
+" "$1" "$2" 2>/dev/null || true
+}
 
-echo ">>> available devices on iOS $IOS_RUNTIME_VERSION:"
-xcrun simctl list devices available | grep -A1 "iOS ${IOS_RUNTIME_VERSION}" || true
+# Create <name> from <device-type> on <runtime-id> unless that runtime already
+# has a device with that exact name. Idempotent across re-bakes and Xcode's
+# default set, and never mints an ambiguous twin on the same runtime.
+ensure_device() {
+    local name="$1" device_type="$2" runtime_id="$3"
+    if [[ -n "$(udid_on_runtime "$runtime_id" "$name")" ]]; then
+        echo ">>> simulator '$name' already exists on $runtime_id, skipping create"
+    else
+        echo ">>> creating simulator '$name' on $runtime_id"
+        xcrun simctl create "$name" "$device_type" "$runtime_id"
+    fi
+}
+
+# Boot the <name> device on <runtime-id> by UDID, poll until Booted (cap ~120s),
+# then shut it down. The booted state itself doesn't survive the clone, but the
+# warmed data container does. Bounded poll rather than an unbounded `simctl
+# bootstatus` so a wedged headless boot can't hang the non-interactive bake;
+# every step is best-effort.
+warm_boot() {
+    local name="$1" runtime_id="$2" udid="" state=""
+    udid="$(udid_on_runtime "$runtime_id" "$name")"
+    if [[ -z "$udid" ]]; then
+        echo ">>> WARN: '$name' not found on $runtime_id; skipping warm boot"
+        return 0
+    fi
+    echo ">>> warm-booting '$name' ($udid)"
+    xcrun simctl boot "$udid" 2>/dev/null || true
+    for _ in {1..60}; do
+        state=$(xcrun simctl list devices -j | /usr/bin/python3 -c "
+import json, sys
+udid = sys.argv[1]
+for v in json.load(sys.stdin)['devices'].values():
+    for d in v:
+        if d.get('udid') == udid:
+            print(d.get('state', '')); sys.exit()
+" "$udid" 2>/dev/null || true)
+        [[ "$state" == "Booted" ]] && break
+        sleep 2
+    done
+    echo ">>> '$name' state: ${state:-unknown}"
+    xcrun simctl shutdown "$udid" 2>/dev/null || true
+}
+
+# iPhone 16 on the downloaded iOS 18.5 runtime (Maestro smoke tests).
+RUNTIME_ID_18=$(runtime_id_for "$IOS_RUNTIME_VERSION")
+echo ">>> iOS $IOS_RUNTIME_VERSION runtime id: $RUNTIME_ID_18"
+ensure_device "iPhone 16 (iOS ${IOS_RUNTIME_VERSION})" \
+    "com.apple.CoreSimulator.SimDeviceType.iPhone-16" "$RUNTIME_ID_18"
+warm_boot "iPhone 16 (iOS ${IOS_RUNTIME_VERSION})" "$RUNTIME_ID_18"
+
+# iPhone 17 Pro Max on the pinned iOS $IOS_SNAPSHOT_RUNTIME_VERSION runtime
+# (Rallista-iOS-V3 CI target). Bare name to match the repo's device string; the
+# runtime-scoped helpers keep it distinct from any same-named stock device on a
+# different 26.x runtime, and CI's `(${IOS_SNAPSHOT_RUNTIME_VERSION})` suffix
+# selects this exact one.
+RUNTIME_ID_SNAP=$(runtime_id_for "$IOS_SNAPSHOT_RUNTIME_VERSION")
+echo ">>> iOS $IOS_SNAPSHOT_RUNTIME_VERSION runtime id: $RUNTIME_ID_SNAP"
+ensure_device "iPhone 17 Pro Max" \
+    "com.apple.CoreSimulator.SimDeviceType.iPhone-17-Pro-Max" "$RUNTIME_ID_SNAP"
+warm_boot "iPhone 17 Pro Max" "$RUNTIME_ID_SNAP"
+
+echo ">>> available devices:"
+xcrun simctl list devices available || true
 
 # ---- Rust + just -----------------------------------------------------------
 
