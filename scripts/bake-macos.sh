@@ -5,8 +5,8 @@
 # jobs, so both of the host's two macOS VM slots can handle any mobile workload.
 #
 # Why iOS 18.6: Maestro smoke tests run on iOS 18. Xcode 27 does not download
-# iOS 18 runtimes, so the bake copies the signed runtime image from the host.
-# The host must have iOS 18.6 installed (`xcrun simctl runtime list`).
+# iOS 18 runtimes, so the bake copies a signed runtime image from the host into
+# the guest. See the image lookup below for where the host keeps it.
 #
 # Why baked together (and not two goldens): Apple's EULA caps macOS guests at
 # two per host. Separate xcode/android goldens pin each slot to one workload
@@ -22,7 +22,8 @@
 #   IOS_RUNTIME_VERSION  iOS simulator runtime to pin (default 27.0)
 #   MAESTRO_IOS_RUNTIME_VERSION  iOS runtime for Maestro smoke tests (default 18.6)
 #   MAESTRO_IOS_RUNTIME_DMG      host path of that runtime's disk image (default:
-#                        found with `xcrun simctl runtime list`)
+#                        state/ios-<version>-simulator-runtime.dmg, then the
+#                        host Xcode's runtime)
 #   BAKE_CPU             cores during bake (default 6)
 #   BAKE_MEM_MB          memory during bake, MB (default 12288)
 #   BAKE_DISK_GB         disk size for the golden (default 180 — two iOS runtimes +16GB, Android SDK +4GB)
@@ -47,7 +48,15 @@ command -v tart >/dev/null \
 [[ -f "$INSTALL_SCRIPT" ]] \
   || { echo "missing $INSTALL_SCRIPT" >&2; exit 1; }
 
-if [[ -z "${MAESTRO_IOS_RUNTIME_DMG:-}" ]]; then
+# Find the iOS $MAESTRO_IOS_RUNTIME_VERSION runtime image. Use the first that
+# is set: MAESTRO_IOS_RUNTIME_DMG, the cached copy in state/, or the runtime
+# that this host's Xcode installed. A host with only Command Line Tools has no
+# simctl, so it needs the cached copy.
+RUNTIME_CACHE="$(dirname "$HERE")/state/ios-$MAESTRO_IOS_RUNTIME_VERSION-simulator-runtime.dmg"
+if [[ -z "${MAESTRO_IOS_RUNTIME_DMG:-}" && -f "$RUNTIME_CACHE" ]]; then
+  MAESTRO_IOS_RUNTIME_DMG="$RUNTIME_CACHE"
+fi
+if [[ -z "${MAESTRO_IOS_RUNTIME_DMG:-}" ]] && xcrun -f simctl >/dev/null 2>&1; then
   MAESTRO_IOS_RUNTIME_DMG=$(xcrun simctl runtime list -j | /usr/bin/python3 -c "
 import json, sys
 version = sys.argv[1]
@@ -56,9 +65,20 @@ for img in json.load(sys.stdin).values():
         print(img.get('path', '')); break
 " "$MAESTRO_IOS_RUNTIME_VERSION")
 fi
-[[ -f "$MAESTRO_IOS_RUNTIME_DMG" ]] \
-  || { echo "no iOS $MAESTRO_IOS_RUNTIME_VERSION runtime image on this host — install it with Xcode 26, or set MAESTRO_IOS_RUNTIME_DMG" >&2; exit 1; }
+if [[ ! -f "${MAESTRO_IOS_RUNTIME_DMG:-}" ]]; then
+  cat >&2 <<EOF
+No iOS $MAESTRO_IOS_RUNTIME_VERSION simulator runtime image found. Xcode 27 cannot download it.
+To fix:
+  1. On a Mac that has iOS $MAESTRO_IOS_RUNTIME_VERSION, find the image path with:
+       xcrun simctl runtime list -j
+  2. Copy that .dmg to this host at:
+       $RUNTIME_CACHE
+  3. Run the bake again.
+EOF
+  exit 1
+fi
 readonly MAESTRO_IOS_RUNTIME_DMG
+echo ">>> iOS $MAESTRO_IOS_RUNTIME_VERSION runtime image: $MAESTRO_IOS_RUNTIME_DMG"
 
 readonly SSH_OPTS=(-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR -o ConnectTimeout=15 -o PubkeyAuthentication=no -o PreferredAuthentications=password -o IdentitiesOnly=yes)
 ssh_run() { sshpass -p "$GUEST_PASS" ssh "${SSH_OPTS[@]}" "$GUEST_USER@$1" "$2"; }

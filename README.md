@@ -35,8 +35,16 @@ bakery build macos       # ~30-50 min, ~20 GB (iOS 27 + iOS 18.6 runtimes are ~8
 ```
 
 The macOS bake copies the iOS 18.6 simulator runtime (for Maestro) from the
-host, because Xcode 27 does not download iOS 18 runtimes. Make sure that
-`xcrun simctl runtime list` on the host shows iOS 18.6 before you bake.
+host into the guest, because Xcode 27 cannot download iOS 18 runtimes. If the
+host has Xcode with iOS 18.6, the bake finds the image. If the host has only
+Command Line Tools, copy the image there one time:
+
+```sh
+# On a Mac that has iOS 18.6 (Xcode → Settings → Components), get the path:
+xcrun simctl runtime list -j | python3 -c 'import json,sys; print(*[i["path"] for i in json.load(sys.stdin).values() if i["version"]=="18.6"])'
+# Copy it to the bakery host (~9 GB):
+scp <path> <host>:<bakery>/state/ios-18.6-simulator-runtime.dmg
+```
 
 Add a new golden: drop `scripts/bake-<name>.sh` + `scripts/bake/<name>-install.sh`;
 `bakery build <name>` picks it up.
