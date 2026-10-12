@@ -1,13 +1,8 @@
 #!/bin/bash
-# Bake the unified macOS golden: Cirrus macos-tahoe-xcode + iOS 18 simulator
-# runtime + JDK 21 + Android SDK/emulator + arm64-v8a system image. The result
-# can pick up either iOS (xcode) or Android (android) jobs, so both of the
-# host's two macOS VM slots can handle any mobile workload.
-#
-# Why iOS 18: Maestro 2.4.0 doesn't track simctl-launched apps correctly on
-# iOS 26 simulators (SpringBoard assertions stay inactive; XCUIApplication
-# reports "not running" while the app is clearly alive). Pinning smoke tests
-# to an iOS 18 device sidesteps that without downgrading Xcode.
+# Bake the unified macOS golden: Cirrus macos-tahoe-xcode (Xcode 27) + iOS 27
+# simulator runtime + JDK 21 + Android SDK/emulator + arm64-v8a system image.
+# The result can pick up either iOS (xcode) or Android (android) jobs, so both
+# of the host's two macOS VM slots can handle any mobile workload.
 #
 # Why baked together (and not two goldens): Apple's EULA caps macOS guests at
 # two per host. Separate xcode/android goldens pin each slot to one workload
@@ -19,17 +14,17 @@
 #   scripts/bake-macos.sh my-mobile        # -> local VM "my-mobile"
 #
 # Env overrides:
-#   BAKE_SOURCE          source OCI/local name (default ghcr.io/cirruslabs/macos-tahoe-xcode:latest)
-#   IOS_RUNTIME_VERSION  iOS simulator runtime to add (default 18.5)
+#   BAKE_SOURCE          source OCI/local name (default ghcr.io/cirruslabs/macos-tahoe-xcode:27)
+#   IOS_RUNTIME_VERSION  iOS simulator runtime to pin (default 27.0)
 #   BAKE_CPU             cores during bake (default 6)
 #   BAKE_MEM_MB          memory during bake, MB (default 12288)
 #   BAKE_DISK_GB         disk size for the golden (default 180 — iOS runtime +8GB, Android SDK +4GB)
 set -euo pipefail
 
 readonly HERE="$(cd "$(dirname "$0")" && pwd)"
-readonly SOURCE_IMAGE="${BAKE_SOURCE:-ghcr.io/cirruslabs/macos-tahoe-xcode:latest}"
+readonly SOURCE_IMAGE="${BAKE_SOURCE:-ghcr.io/cirruslabs/macos-tahoe-xcode:27}"
 readonly DEST_NAME="${1:-macos}"
-readonly IOS_RUNTIME_VERSION="${IOS_RUNTIME_VERSION:-18.5}"
+readonly IOS_RUNTIME_VERSION="${IOS_RUNTIME_VERSION:-27.0}"
 readonly BAKE_CPU="${BAKE_CPU:-6}"
 readonly BAKE_MEM_MB="${BAKE_MEM_MB:-12288}"
 readonly BAKE_DISK_GB="${BAKE_DISK_GB:-180}"

@@ -1,7 +1,7 @@
 #!/bin/bash
 # Runs inside a macOS aarch64 guest (cloned from macos-tahoe-xcode) during
 # `bake-macos.sh`. Layers on top of the stock Cirrus Xcode image:
-#   - iOS simulator runtime $IOS_RUNTIME_VERSION (default 18.5) + iPhone 16 device
+#   - iOS simulator runtime $IOS_RUNTIME_VERSION (default 27.0) + iPhone 17 Pro Max device
 #   - Temurin JDK 21 (Homebrew cask)
 #   - Android cmdline-tools + platform-tools + platforms;android-34 + build-tools;34.0.0
 #   - Android emulator + arm64-v8a system image (API 34)
@@ -21,8 +21,8 @@
 # macOS guests are EULA-capped at 2 per host and shouldn't be consumed by
 # work that has no macOS dependency.
 #
-# The stock image ships Xcode with iOS 26.x only; iOS 18 is added alongside so
-# Maestro smoke tests have a compatible simulator to target.
+# The stock image ships Xcode 27 with its matching iOS 27.x runtime. We pin the
+# point release so the golden does not drift with the base image.
 #
 # Note: on M1/M2 hosts the Android emulator will run in TCG (software) mode
 # because there's no nested virtualization — expect 10-50x slower instrumentation
@@ -33,7 +33,7 @@ set -euo pipefail
 # Non-interactive SSH doesn't source ~/.zprofile; put Apple Silicon brew on PATH.
 eval "$(/opt/homebrew/bin/brew shellenv 2>/dev/null)" || true
 
-IOS_RUNTIME_VERSION="${IOS_RUNTIME_VERSION:-18.5}"
+IOS_RUNTIME_VERSION="${IOS_RUNTIME_VERSION:-27.0}"
 ANDROID_HOME="${ANDROID_HOME:-$HOME/Library/Android/sdk}"
 ANDROID_NDK_VERSION="${ANDROID_NDK_VERSION:-26.2.11394342}"
 CMDLINE_TOOLS_BUILD="${CMDLINE_TOOLS_BUILD:-11076708}"
@@ -94,15 +94,16 @@ print(match['identifier'])
 ")
 echo ">>> runtime id: $RUNTIME_ID"
 
-DEVICE_NAME="iPhone 16 (iOS ${IOS_RUNTIME_VERSION})"
-DEVICE_TYPE="com.apple.CoreSimulator.SimDeviceType.iPhone-16"
+# Bare name: Rallista-iOS-V3 targets "iPhone 17 Pro Max" with no OS suffix.
+DEVICE_NAME="iPhone 17 Pro Max"
+DEVICE_TYPE="com.apple.CoreSimulator.SimDeviceType.iPhone-17-Pro-Max"
 
-# Idempotent create — if a prior bake ran the script, skip rather than duplicate.
+# Idempotent create — Xcode's default set or a prior bake may already have
+# this device on the runtime. Skip it then, so the name stays unambiguous.
 if ! xcrun simctl list devices -j | /usr/bin/python3 -c "
 import json, sys
-devices = json.load(sys.stdin)['devices']
-name = '${DEVICE_NAME}'
-sys.exit(0 if any(d.get('name') == name for v in devices.values() for d in v) else 1)
+devices = json.load(sys.stdin)['devices'].get('${RUNTIME_ID}', [])
+sys.exit(0 if any(d.get('name') == '${DEVICE_NAME}' for d in devices) else 1)
 " 2>/dev/null; then
     echo ">>> creating simulator '$DEVICE_NAME'"
     xcrun simctl create "$DEVICE_NAME" "$DEVICE_TYPE" "$RUNTIME_ID"
