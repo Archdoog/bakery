@@ -35,6 +35,11 @@ set -euo pipefail
 
 # Non-interactive SSH doesn't source ~/.zprofile; put Apple Silicon brew on PATH.
 eval "$(/opt/homebrew/bin/brew shellenv 2>/dev/null)" || true
+# The Cirrus image already has some formulae (node@24). Do not let `brew install`
+# upgrade them. An upgrade pulls in new dependencies, and Homebrew 5 then can
+# stop on its own lock: "A `brew install --quiet node@24` process has already
+# locked /opt/homebrew/Cellar/openssl@3".
+export HOMEBREW_NO_INSTALL_UPGRADE=1
 
 IOS_RUNTIME_VERSION="${IOS_RUNTIME_VERSION:-27.0}"
 MAESTRO_IOS_RUNTIME_VERSION="${MAESTRO_IOS_RUNTIME_VERSION:-18.6}"
