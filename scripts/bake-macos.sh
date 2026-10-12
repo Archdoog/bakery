@@ -104,7 +104,17 @@ download_runtime_image() {
   tart delete "$RUNTIME_DONOR_NAME" >/dev/null 2>&1 || true
   tart clone "$RUNTIME_DONOR_SOURCE" "$RUNTIME_DONOR_NAME"
   boot_vm "$RUNTIME_DONOR_NAME"
-  ssh_run "$VM_IP" "rm -rf /tmp/runtime && mkdir /tmp/runtime && xcodebuild -downloadPlatform iOS -buildVersion '$MAESTRO_IOS_RUNTIME_VERSION' -exportPath /tmp/runtime"
+  # SSH comes up before the guest's auto-login finishes. Until then, xcodebuild
+  # stops with "Unable to connect to simulator". Wait for simctl to answer, and
+  # retry the download if the services are still not stable.
+  echo ">>> waiting for the guest's simulator services"
+  ssh_run "$VM_IP" 'for _ in $(seq 60); do xcrun simctl list runtimes >/dev/null 2>&1 && xcrun simctl runtime list >/dev/null 2>&1 && exit 0; sleep 5; done; echo "simctl did not answer after 5 min" >&2; exit 1'
+  for attempt in 1 2 3; do
+    ssh_run "$VM_IP" "rm -rf /tmp/runtime && mkdir /tmp/runtime && xcodebuild -downloadPlatform iOS -buildVersion '$MAESTRO_IOS_RUNTIME_VERSION' -exportPath /tmp/runtime" && break
+    [[ $attempt -lt 3 ]] || { echo "iOS $MAESTRO_IOS_RUNTIME_VERSION download failed 3 times" >&2; exit 1; }
+    echo ">>> download attempt $attempt failed, trying again in 30s"
+    sleep 30
+  done
   remote=$(ssh_run "$VM_IP" "find /tmp/runtime -name '*.dmg' | head -1")
   [[ -n "$remote" ]] || { echo "xcodebuild exported no .dmg to /tmp/runtime" >&2; exit 1; }
   echo ">>> copying $remote to $dest"

@@ -71,6 +71,14 @@ sudo sshd -t && echo ">>> sshd config OK" || echo ">>> WARN: sshd -t flagged the
 echo ">>> Xcode info"
 xcodebuild -version
 
+# SSH comes up before the guest's auto-login finishes. Until then, simctl and
+# xcodebuild cannot connect to the simulator services. Wait for them.
+echo ">>> waiting for the simulator services"
+for _ in $(seq 60); do
+    xcrun simctl list runtimes >/dev/null 2>&1 && xcrun simctl runtime list >/dev/null 2>&1 && break
+    sleep 5
+done
+
 echo ">>> runtimes before"
 xcrun simctl list runtimes || true
 
