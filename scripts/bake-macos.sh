@@ -1,13 +1,12 @@
 #!/bin/bash
-# Bake the unified macOS golden: Cirrus macos-tahoe-xcode + iOS 18 simulator
-# runtime + JDK 21 + Android SDK/emulator + arm64-v8a system image. The result
-# can pick up either iOS (xcode) or Android (android) jobs, so both of the
-# host's two macOS VM slots can handle any mobile workload.
+# Bake the unified macOS golden: Cirrus macos-tahoe-xcode (Xcode 27) + iOS 27
+# and iOS 18.6 simulator runtimes + JDK 21 + Android SDK/emulator + arm64-v8a
+# system image. The result can pick up either iOS (xcode) or Android (android)
+# jobs, so both of the host's two macOS VM slots can handle any mobile workload.
 #
-# Why iOS 18: Maestro 2.4.0 doesn't track simctl-launched apps correctly on
-# iOS 26 simulators (SpringBoard assertions stay inactive; XCUIApplication
-# reports "not running" while the app is clearly alive). Pinning smoke tests
-# to an iOS 18 device sidesteps that without downgrading Xcode.
+# Why iOS 18.6: Maestro smoke tests run on iOS 18. Xcode 27 does not download
+# iOS 18 runtimes, so the bake copies the signed runtime image from the host.
+# The host must have iOS 18.6 installed (`xcrun simctl runtime list`).
 #
 # Why baked together (and not two goldens): Apple's EULA caps macOS guests at
 # two per host. Separate xcode/android goldens pin each slot to one workload
@@ -19,17 +18,21 @@
 #   scripts/bake-macos.sh my-mobile        # -> local VM "my-mobile"
 #
 # Env overrides:
-#   BAKE_SOURCE          source OCI/local name (default ghcr.io/cirruslabs/macos-tahoe-xcode:latest)
-#   IOS_RUNTIME_VERSION  iOS simulator runtime to add (default 18.5)
+#   BAKE_SOURCE          source OCI/local name (default ghcr.io/cirruslabs/macos-tahoe-xcode:27)
+#   IOS_RUNTIME_VERSION  iOS simulator runtime to pin (default 27.0)
+#   MAESTRO_IOS_RUNTIME_VERSION  iOS runtime for Maestro smoke tests (default 18.6)
+#   MAESTRO_IOS_RUNTIME_DMG      host path of that runtime's disk image (default:
+#                        found with `xcrun simctl runtime list`)
 #   BAKE_CPU             cores during bake (default 6)
 #   BAKE_MEM_MB          memory during bake, MB (default 12288)
-#   BAKE_DISK_GB         disk size for the golden (default 180 — iOS runtime +8GB, Android SDK +4GB)
+#   BAKE_DISK_GB         disk size for the golden (default 180 — two iOS runtimes +16GB, Android SDK +4GB)
 set -euo pipefail
 
 readonly HERE="$(cd "$(dirname "$0")" && pwd)"
-readonly SOURCE_IMAGE="${BAKE_SOURCE:-ghcr.io/cirruslabs/macos-tahoe-xcode:latest}"
+readonly SOURCE_IMAGE="${BAKE_SOURCE:-ghcr.io/cirruslabs/macos-tahoe-xcode:27}"
 readonly DEST_NAME="${1:-macos}"
-readonly IOS_RUNTIME_VERSION="${IOS_RUNTIME_VERSION:-18.5}"
+readonly IOS_RUNTIME_VERSION="${IOS_RUNTIME_VERSION:-27.0}"
+readonly MAESTRO_IOS_RUNTIME_VERSION="${MAESTRO_IOS_RUNTIME_VERSION:-18.6}"
 readonly BAKE_CPU="${BAKE_CPU:-6}"
 readonly BAKE_MEM_MB="${BAKE_MEM_MB:-12288}"
 readonly BAKE_DISK_GB="${BAKE_DISK_GB:-180}"
@@ -43,6 +46,19 @@ command -v tart >/dev/null \
   || { echo "tart not found — brew install cirruslabs/cli/tart" >&2; exit 1; }
 [[ -f "$INSTALL_SCRIPT" ]] \
   || { echo "missing $INSTALL_SCRIPT" >&2; exit 1; }
+
+if [[ -z "${MAESTRO_IOS_RUNTIME_DMG:-}" ]]; then
+  MAESTRO_IOS_RUNTIME_DMG=$(xcrun simctl runtime list -j | /usr/bin/python3 -c "
+import json, sys
+version = sys.argv[1]
+for img in json.load(sys.stdin).values():
+    if img.get('version') == version and img.get('state') == 'Ready':
+        print(img.get('path', '')); break
+" "$MAESTRO_IOS_RUNTIME_VERSION")
+fi
+[[ -f "$MAESTRO_IOS_RUNTIME_DMG" ]] \
+  || { echo "no iOS $MAESTRO_IOS_RUNTIME_VERSION runtime image on this host — install it with Xcode 26, or set MAESTRO_IOS_RUNTIME_DMG" >&2; exit 1; }
+readonly MAESTRO_IOS_RUNTIME_DMG
 
 readonly SSH_OPTS=(-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR -o ConnectTimeout=15 -o PubkeyAuthentication=no -o PreferredAuthentications=password -o IdentitiesOnly=yes)
 ssh_run() { sshpass -p "$GUEST_PASS" ssh "${SSH_OPTS[@]}" "$GUEST_USER@$1" "$2"; }
@@ -78,8 +94,11 @@ done
 echo ">>> copying installer"
 scp_to "$IP" "$INSTALL_SCRIPT" "/tmp/macos-install.sh"
 
-echo ">>> running installer (iOS $IOS_RUNTIME_VERSION runtime ~8GB + Android SDK ~3GB, 25-40 min)"
-ssh_run "$IP" "IOS_RUNTIME_VERSION='$IOS_RUNTIME_VERSION' chmod +x /tmp/macos-install.sh && /tmp/macos-install.sh"
+echo ">>> copying iOS $MAESTRO_IOS_RUNTIME_VERSION runtime image (~9GB)"
+scp_to "$IP" "$MAESTRO_IOS_RUNTIME_DMG" "/tmp/maestro-ios-runtime.dmg"
+
+echo ">>> running installer (iOS $IOS_RUNTIME_VERSION + $MAESTRO_IOS_RUNTIME_VERSION runtimes ~16GB + Android SDK ~3GB, 30-50 min)"
+ssh_run "$IP" "chmod +x /tmp/macos-install.sh && IOS_RUNTIME_VERSION='$IOS_RUNTIME_VERSION' MAESTRO_IOS_RUNTIME_VERSION='$MAESTRO_IOS_RUNTIME_VERSION' MAESTRO_IOS_RUNTIME_DMG=/tmp/maestro-ios-runtime.dmg /tmp/macos-install.sh"
 
 echo ">>> shutting guest down"
 ssh_run "$IP" "sudo shutdown -h now" || true

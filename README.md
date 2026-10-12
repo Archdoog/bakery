@@ -31,8 +31,12 @@ Each class needs its golden built once.
 
 ```sh
 bakery build ubuntu      # ~15-20 min, ~3 GB download
-bakery build macos       # ~25-40 min, ~12 GB (iOS 18 runtime alone is 8 GB)
+bakery build macos       # ~30-50 min, ~20 GB (iOS 27 + iOS 18.6 runtimes are ~8 GB each)
 ```
+
+The macOS bake copies the iOS 18.6 simulator runtime (for Maestro) from the
+host, because Xcode 27 does not download iOS 18 runtimes. Make sure that
+`xcrun simctl runtime list` on the host shows iOS 18.6 before you bake.
 
 Add a new golden: drop `scripts/bake-<name>.sh` + `scripts/bake/<name>-install.sh`;
 `bakery build <name>` picks it up.
@@ -40,13 +44,14 @@ Add a new golden: drop `scripts/bake-<name>.sh` + `scripts/bake/<name>-install.s
 ### Bumping a tool version (e.g. Xcode)
 
 Tool versions live in the bake scripts — Xcode comes from the Cirrus base image
-(`BAKE_SOURCE` in `scripts/bake-macos.sh`, default `…macos-tahoe-xcode:latest`),
+(`BAKE_SOURCE` in `scripts/bake-macos.sh`, default `…macos-tahoe-xcode:27`),
 others from `scripts/bake/<name>-install.sh` (e.g. `IOS_RUNTIME_VERSION`). Pin
 the version, re-bake, then re-clone the runners:
 
 ```sh
-# Xcode 26.5 (Cirrus publishes a matching tag):
-BAKE_SOURCE=ghcr.io/cirruslabs/macos-tahoe-xcode:26.5 tart delete macos; bakery build macos
+# Xcode 27.1 (Cirrus publishes a matching tag) + its iOS runtime:
+tart delete macos
+BAKE_SOURCE=ghcr.io/cirruslabs/macos-tahoe-xcode:27.1 IOS_RUNTIME_VERSION=27.1 bakery build macos
 bakery recycle macos     # re-stamp runners from the new golden
 ```
 
