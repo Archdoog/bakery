@@ -60,10 +60,22 @@ scp_from() { sshpass -p "$GUEST_PASS" scp "${SSH_OPTS[@]}" "$GUEST_USER@$1:$2" "
 
 # One guest runs at a time. The EXIT trap stops it and deletes the donor.
 VM_NAME="" VM_PID="" VM_IP=""
+# Wait up to 2 min for `tart run` to exit, then end it. Sometimes `tart run`
+# stays alive after the guest stops, and an unbounded wait hangs the bake.
+wait_vm_exit() {
+  for _ in $(seq 60); do
+    kill -0 "$VM_PID" 2>/dev/null || break
+    sleep 2
+  done
+  kill "$VM_PID" 2>/dev/null || true
+  wait "$VM_PID" 2>/dev/null || true
+  VM_PID=""
+}
+
 cleanup() {
   if [[ -n "$VM_PID" ]] && kill -0 "$VM_PID" 2>/dev/null; then
     tart stop "$VM_NAME" >/dev/null 2>&1 || true
-    wait "$VM_PID" 2>/dev/null || true
+    wait_vm_exit
   fi
   tart delete "$RUNTIME_DONOR_NAME" >/dev/null 2>&1 || true
 }
@@ -89,8 +101,7 @@ boot_vm() {
 
 shutdown_vm() {
   ssh_run "$VM_IP" "sudo shutdown -h now" || true
-  wait "$VM_PID" 2>/dev/null || true
-  VM_PID=""
+  wait_vm_exit
 }
 
 # Download the iOS runtime image with a temporary Xcode 26 guest and save it
@@ -104,7 +115,17 @@ download_runtime_image() {
   tart delete "$RUNTIME_DONOR_NAME" >/dev/null 2>&1 || true
   tart clone "$RUNTIME_DONOR_SOURCE" "$RUNTIME_DONOR_NAME"
   boot_vm "$RUNTIME_DONOR_NAME"
-  ssh_run "$VM_IP" "rm -rf /tmp/runtime && mkdir /tmp/runtime && xcodebuild -downloadPlatform iOS -buildVersion '$MAESTRO_IOS_RUNTIME_VERSION' -exportPath /tmp/runtime"
+  # SSH comes up before the guest's auto-login finishes. Until then, xcodebuild
+  # stops with "Unable to connect to simulator". Wait for simctl to answer, and
+  # retry the download if the services are still not stable.
+  echo ">>> waiting for the guest's simulator services"
+  ssh_run "$VM_IP" 'for _ in $(seq 60); do xcrun simctl list runtimes >/dev/null 2>&1 && xcrun simctl runtime list >/dev/null 2>&1 && exit 0; sleep 5; done; echo "simctl did not answer after 5 min" >&2; exit 1'
+  for attempt in 1 2 3; do
+    ssh_run "$VM_IP" "rm -rf /tmp/runtime && mkdir /tmp/runtime && xcodebuild -downloadPlatform iOS -buildVersion '$MAESTRO_IOS_RUNTIME_VERSION' -exportPath /tmp/runtime" && break
+    [[ $attempt -lt 3 ]] || { echo "iOS $MAESTRO_IOS_RUNTIME_VERSION download failed 3 times" >&2; exit 1; }
+    echo ">>> download attempt $attempt failed, trying again in 30s"
+    sleep 30
+  done
   remote=$(ssh_run "$VM_IP" "find /tmp/runtime -name '*.dmg' | head -1")
   [[ -n "$remote" ]] || { echo "xcodebuild exported no .dmg to /tmp/runtime" >&2; exit 1; }
   echo ">>> copying $remote to $dest"
