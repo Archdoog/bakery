@@ -31,8 +31,12 @@ Each class needs its golden built once.
 
 ```sh
 bakery build ubuntu      # ~15-20 min, ~3 GB download
-bakery build macos       # ~25-40 min, ~12 GB (iOS 27 runtime alone is ~8 GB)
+bakery build macos       # ~30-50 min, ~20 GB (iOS 27 + iOS 18.6 runtimes are ~8 GB each)
 ```
+
+The macOS bake copies the iOS 18.6 simulator runtime (for Maestro) from the
+host, because Xcode 27 does not download iOS 18 runtimes. Make sure that
+`xcrun simctl runtime list` on the host shows iOS 18.6 before you bake.
 
 Add a new golden: drop `scripts/bake-<name>.sh` + `scripts/bake/<name>-install.sh`;
 `bakery build <name>` picks it up.
