@@ -131,30 +131,38 @@ sys.exit(0 if any(d.get('name') == '${name}' for d in devices) else 1)
 
 # Xcode 27 does not download iOS 18 runtimes ("not available for download").
 # bake-macos.sh copies a signed runtime image to the guest, and this step
-# imports it. The image is either a raw runtime image from a host Xcode or an
-# `xcodebuild -exportPath` bundle. Do not use `simctl runtime add --move`: for
-# a bundle, it tries to remove the inner image from the read-only bundle volume
-# and marks the runtime "Unusable". If simctl gives no usable runtime, try
-# `xcodebuild -importPlatform`, which reads -exportPath bundles.
+# imports it. The image is a raw runtime image from a host Xcode, or an
+# `xcodebuild -exportPath` bundle with the raw image in Restore/. Xcode 27's
+# `simctl runtime add` cannot import the bundle: it tries to remove the inner
+# image from the read-only bundle volume and marks the runtime "Unusable". So
+# copy the inner image out of a bundle and import that. simctl consumes the
+# file that it imports.
 if [[ -n "${MAESTRO_IOS_RUNTIME_DMG:-}" ]]; then
-    echo ">>> importing iOS $MAESTRO_IOS_RUNTIME_VERSION runtime from $MAESTRO_IOS_RUNTIME_DMG"
-    xcrun simctl runtime add "$MAESTRO_IOS_RUNTIME_DMG" || true
+    runtime_dmg="$MAESTRO_IOS_RUNTIME_DMG"
+    mnt=$(mktemp -d /tmp/runtime-bundle.XXXX)
+    if hdiutil attach -readonly -nobrowse -noverify -mountpoint "$mnt" "$runtime_dmg" >/dev/null; then
+        inner=""
+        [[ -d "$mnt/Restore" ]] && inner=$(find "$mnt/Restore" -maxdepth 1 -name '*.dmg' | head -1)
+        if [[ -n "$inner" ]]; then
+            echo ">>> $runtime_dmg is a runtime bundle, copying out Restore/$(basename "$inner")"
+            cp "$inner" /tmp/maestro-ios-runtime-inner.dmg
+            runtime_dmg=/tmp/maestro-ios-runtime-inner.dmg
+        fi
+        hdiutil detach "$mnt" -quiet
+    fi
+    echo ">>> importing iOS $MAESTRO_IOS_RUNTIME_VERSION runtime from $runtime_dmg"
+    xcrun simctl runtime add "$runtime_dmg" || true
     # The runtime can take a few seconds to show up after the add returns.
     for _ in $(seq 15); do
         [[ -n "$(runtime_id_for "$MAESTRO_IOS_RUNTIME_VERSION")" ]] && break
         sleep 2
     done
-    if [[ -z "$(runtime_id_for "$MAESTRO_IOS_RUNTIME_VERSION")" ]]; then
-        echo ">>> simctl import gave no usable runtime, trying xcodebuild -importPlatform"
-        xcrun simctl runtime delete --unusable || true
-        xcodebuild -importPlatform "$MAESTRO_IOS_RUNTIME_DMG" || true
-    fi
     [[ -n "$(runtime_id_for "$MAESTRO_IOS_RUNTIME_VERSION")" ]] || {
-        echo "could not import iOS $MAESTRO_IOS_RUNTIME_VERSION from $MAESTRO_IOS_RUNTIME_DMG" >&2
+        echo "could not import iOS $MAESTRO_IOS_RUNTIME_VERSION from $runtime_dmg" >&2
         xcrun simctl runtime list >&2 || true
         exit 1
     }
-    rm -f "$MAESTRO_IOS_RUNTIME_DMG"
+    rm -f "$MAESTRO_IOS_RUNTIME_DMG" "$runtime_dmg"
 fi
 
 # Bare name: Rallista-iOS-V3 targets "iPhone 17 Pro Max" with no OS suffix.
