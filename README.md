@@ -99,6 +99,21 @@ mechanisms keep that bounded:
   the golden. Run it nightly via `cron`/`launchd` when the queue is idle,
   or on demand when a runner reports disk pressure.
 
+The host fills up too. A runner VM is an APFS clone, so it does not need the
+tart OCI cache or its golden after `up`. Use `bakery clean` to free that
+space:
+
+```sh
+bakery clean            # delete the tart OCI and IPSW caches, keep the goldens
+bakery clean --goldens  # also delete the goldens, on a host that is short of disk
+```
+
+- After `clean`, the next `bakery build` downloads its base image again.
+- After `clean --goldens`, do a `bakery build` before the next `recycle` or
+  new runner.
+- The clone, the golden, and the cache share disk blocks. Thus `clean` frees
+  less than the sizes in `tart list` show. It prints the real amount.
+
 ## Updating after `git pull`
 
 `bakery up` is idempotent: golden-fingerprint drift triggers a re-clone;
@@ -149,7 +164,7 @@ jobs:
 ## Layout
 
 ```
-src/                  Rust CLI (plan / up / down / status / build)
+src/                  Rust CLI (plan / up / down / recycle / status / build / clean)
 scripts/
   provision-*.sh      runs inside each runner on first boot
   bake-*.sh           host-side orchestrator for `bakery build <name>`

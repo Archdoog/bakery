@@ -7,6 +7,7 @@
 //!   bakery recycle [NAME...] [--force]
 //!   bakery status
 //!   bakery build [IMAGE] [--as NAME]
+//!   bakery clean [--goldens]
 
 mod config;
 mod github;
@@ -15,7 +16,7 @@ mod models;
 mod provision;
 mod tart;
 
-use std::collections::HashSet;
+use std::collections::{BTreeSet, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode};
@@ -106,6 +107,15 @@ enum Cmd {
         #[arg(long = "as")]
         as_name: Option<String>,
     },
+    /// Free host disk. Delete the tart caches, but keep the goldens.
+    ///
+    /// Delete the tart OCI and IPSW caches. The runners continue to work. The
+    /// next `build` downloads its base image again.
+    Clean {
+        /// Also delete the goldens. Do a `build` before the next `recycle` or new runner.
+        #[arg(long)]
+        goldens: bool,
+    },
 }
 
 fn main() -> ExitCode {
@@ -124,6 +134,7 @@ fn main() -> ExitCode {
             load_cfg(&cli.config).and_then(|c| cmd_recycle(&c, names_filter(&names), force))
         }
         Cmd::Status => load_cfg(&cli.config).and_then(|_| cmd_status()),
+        Cmd::Clean { goldens } => load_cfg(&cli.config).and_then(|c| cmd_clean(&c, goldens)),
     };
     match rc {
         Ok(code) => ExitCode::from(code),
@@ -513,6 +524,57 @@ fn cmd_build(image: Option<&str>, as_name: Option<&str>) -> Result<u8> {
         .status()
         .with_context(|| format!("spawning {}", script.display()))?;
     Ok(status.code().unwrap_or(1).try_into().unwrap_or(1))
+}
+
+/// Delete the tart caches and, if `goldens` is set, the goldens. Returns 1 if
+/// tart cannot delete a golden.
+fn cmd_clean(cfg: &FleetConfig, goldens: bool) -> Result<u8> {
+    let images: BTreeSet<&str> = cfg.groups().iter().map(|g| g.image.as_str()).collect();
+    let before = host::free_bytes(&tart::home()).context("reading free disk space")?;
+
+    // A group can clone its runners directly from an OCI image. For that
+    // group, the cache entry is the golden.
+    let cached = tart::cached_images()?;
+    let oci_goldens: Vec<&str> = images
+        .iter()
+        .copied()
+        .filter(|i| cached.iter().any(|c| c == i))
+        .collect();
+    if goldens || oci_goldens.is_empty() {
+        println!("deleting the tart OCI and IPSW caches...");
+        tart::prune_caches()?;
+    } else {
+        println!(
+            "keeping the tart caches: runners clone from {}. Use --goldens to delete them.",
+            oci_goldens.join(", ")
+        );
+    }
+
+    let mut rc = 0;
+    if goldens {
+        for image in images {
+            if !tart::exists(image)? {
+                continue;
+            }
+            match tart::try_delete(image) {
+                Ok(()) => println!(
+                    "deleted golden {image:?}. Run `bakery build {image}` before the next recycle."
+                ),
+                Err(e) => {
+                    eprintln!("could not delete golden {image:?}: {e}");
+                    rc = 1;
+                }
+            }
+        }
+    }
+
+    let after = host::free_bytes(&tart::home()).context("reading free disk space")?;
+    println!(
+        "freed {:.1} GB ({:.1} GB free)",
+        after.saturating_sub(before) as f64 / 1e9,
+        after as f64 / 1e9
+    );
+    Ok(rc)
 }
 
 #[derive(Debug, Serialize, Deserialize)]

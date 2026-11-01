@@ -49,13 +49,18 @@ struct VmEntry {
     disk: Option<u64>,
 }
 
-fn tart_vms_dir() -> PathBuf {
+/// The tart data folder: `$TART_HOME`, or `~/.tart`.
+pub fn home() -> PathBuf {
     std::env::var_os("TART_HOME")
-        .map(|v| PathBuf::from(v).join("vms"))
+        .map(PathBuf::from)
         .unwrap_or_else(|| {
             let home = std::env::var_os("HOME").unwrap_or_else(|| ".".into());
-            PathBuf::from(home).join(".tart").join("vms")
+            PathBuf::from(home).join(".tart")
         })
+}
+
+fn tart_vms_dir() -> PathBuf {
+    home().join("vms")
 }
 
 fn list() -> Result<Vec<VmEntry>> {
@@ -87,6 +92,21 @@ pub fn is_running(name: &str) -> Result<bool> {
     Ok(find(&list()?, name)
         .and_then(|vm| vm.state.as_deref())
         .is_some_and(|s| s == "running"))
+}
+
+/// Names of the OCI images in the tart cache. One image can show two times,
+/// with its tag and with its digest.
+pub fn cached_images() -> Result<Vec<String>> {
+    Ok(list()?
+        .into_iter()
+        .filter(|v| v.source == "OCI")
+        .map(|v| v.name)
+        .collect())
+}
+
+/// Delete all OCI and IPSW cache entries. A budget of 0 GB keeps none.
+pub fn prune_caches() -> Result<()> {
+    run("prune", ["prune", "--entries", "caches", "--space-budget", "0"])
 }
 
 pub fn clone(source: &str, dest: &str) -> Result<()> {
@@ -191,6 +211,11 @@ pub fn stop(name: &str) {
 /// Best-effort delete.
 pub fn delete(name: &str) {
     let _ = Command::new("tart").args(["delete", name]).status();
+}
+
+/// Delete, and return an error if tart fails (for example, the VM runs).
+pub fn try_delete(name: &str) -> Result<()> {
+    run("delete", ["delete", name])
 }
 
 /// Short fingerprint for a local VM based on its `config.json` mtime. Changes
