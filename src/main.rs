@@ -530,7 +530,7 @@ fn cmd_build(image: Option<&str>, as_name: Option<&str>) -> Result<u8> {
 /// tart cannot delete a golden.
 fn cmd_clean(cfg: &FleetConfig, goldens: bool) -> Result<u8> {
     let images: BTreeSet<&str> = cfg.groups().iter().map(|g| g.image.as_str()).collect();
-    let before = host::free_bytes(&tart::home()).context("reading free disk space")?;
+    let before = fs4::available_space(tart::home()).context("reading free disk space")?;
 
     // A group can clone its runners directly from an OCI image. For that
     // group, the cache entry is the golden.
@@ -568,7 +568,7 @@ fn cmd_clean(cfg: &FleetConfig, goldens: bool) -> Result<u8> {
         }
     }
 
-    let after = host::free_bytes(&tart::home()).context("reading free disk space")?;
+    let after = fs4::available_space(tart::home()).context("reading free disk space")?;
     println!(
         "freed {:.1} GB ({:.1} GB free)",
         after.saturating_sub(before) as f64 / 1e9,

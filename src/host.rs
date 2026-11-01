@@ -1,10 +1,7 @@
 //! Host resource detection and fleet feasibility checks.
 
-use std::ffi::CString;
 use std::io;
 use std::num::ParseIntError;
-use std::os::unix::ffi::OsStrExt;
-use std::path::Path;
 use std::process::Command;
 
 use thiserror::Error;
@@ -48,17 +45,6 @@ pub fn detect() -> Result<HostResources, Error> {
         cpu,
         memory_gb: (mem_bytes / (1024 * 1024 * 1024)) as u32,
     })
-}
-
-/// Free bytes on the volume that holds `path`.
-pub fn free_bytes(path: &Path) -> io::Result<u64> {
-    let c_path = CString::new(path.as_os_str().as_bytes())?;
-    // SAFETY: `c_path` is a valid C string and `st` is a valid out-pointer.
-    let mut st: libc::statvfs = unsafe { std::mem::zeroed() };
-    if unsafe { libc::statvfs(c_path.as_ptr(), &mut st) } != 0 {
-        return Err(io::Error::last_os_error());
-    }
-    Ok(u64::from(st.f_bavail) * st.f_frsize)
 }
 
 /// Effective per-resource budget after reserve and over-commit allowance.
