@@ -109,10 +109,9 @@ enum Cmd {
     },
     /// Free host disk. Delete the tart caches, but keep the goldens.
     ///
-    /// Delete the tart OCI and IPSW caches. The runners continue to work. The
-    /// next `build` downloads its base image again.
+    /// Delete the tart OCI and IPSW caches.
     Clean {
-        /// Also delete the goldens. Do a `build` before the next `recycle` or new runner.
+        /// Include golden images in delete.
         #[arg(long)]
         goldens: bool,
     },
@@ -526,7 +525,7 @@ fn cmd_build(image: Option<&str>, as_name: Option<&str>) -> Result<u8> {
     Ok(status.code().unwrap_or(1).try_into().unwrap_or(1))
 }
 
-/// Delete the tart caches and, if `goldens` is set, the goldens. Returns 1 if
+/// Delete the tart caches and optionally golden images. Returns 1 if
 /// tart cannot delete a golden.
 fn cmd_clean(cfg: &FleetConfig, goldens: bool) -> Result<u8> {
     let images: BTreeSet<&str> = cfg.groups().iter().map(|g| g.image.as_str()).collect();

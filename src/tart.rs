@@ -94,8 +94,8 @@ pub fn is_running(name: &str) -> Result<bool> {
         .is_some_and(|s| s == "running"))
 }
 
-/// Names of the OCI images in the tart cache. One image can show two times,
-/// with its tag and with its digest.
+/// Returns the name of each OCI entry in the tart cache, duplicates included.
+/// An image pulled by tag has two entries: one by tag and one by digest.
 pub fn cached_images() -> Result<Vec<String>> {
     Ok(list()?
         .into_iter()
