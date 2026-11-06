@@ -22,8 +22,6 @@ const SSH_OPTS: &[&str] = &[
 
 #[derive(Debug, Error)]
 pub enum ProvisionError {
-    #[error("sshpass not found on PATH. Install with: brew install sshpass")]
-    SshpassMissing,
     #[error("provision script missing: {0}")]
     ScriptMissing(PathBuf),
     #[error("spawning {cmd}")]
@@ -46,15 +44,20 @@ pub enum ProvisionError {
 
 pub type Result<T> = std::result::Result<T, ProvisionError>;
 
-pub fn ensure_sshpass() -> Result<()> {
-    which("sshpass").ok_or(ProvisionError::SshpassMissing).map(drop)
-}
-
-fn which(exe: &str) -> Option<PathBuf> {
-    let path = std::env::var_os("PATH")?;
-    std::env::split_paths(&path)
-        .map(|dir| dir.join(exe))
-        .find(|p| p.is_file())
+/// Returns an `ssh` or `scp` command, named by `program`, that logs in with
+/// `password`. The working directory must be the repo root.
+fn guest_command(program: &str, password: &str) -> Command {
+    // On a macOS 27 host, sshpass fails about 1 login in 4: ssh logs "can't open
+    // /dev/tty", sends empty passwords, and sshd answers "Permission denied".
+    let askpass = std::env::current_dir()
+        .unwrap_or_default()
+        .join("scripts/bake/guest-askpass.sh");
+    let mut cmd = Command::new(program);
+    cmd.env("SSH_ASKPASS", askpass)
+        .env("SSH_ASKPASS_REQUIRE", "force")
+        .env("BAKE_GUEST_PASS", password)
+        .args(SSH_OPTS);
+    cmd
 }
 
 /// Poll SSH until the guest *reliably* accepts authenticated connections.
@@ -88,9 +91,7 @@ pub fn wait_for_ssh(host: &str, user: &str, password: &str, timeout_s: u64) -> R
     let mut streak = 0u32;
     let mut fail_backoff = FAIL_BACKOFF_START_S;
     while Instant::now() < deadline {
-        let ok = Command::new("sshpass")
-            .args(["-p", password, "ssh"])
-            .args(SSH_OPTS)
+        let ok = guest_command("ssh", password)
             .arg(format!("{user}@{host}"))
             .arg("true")
             .status()
@@ -129,7 +130,6 @@ pub struct ProvisionArgs<'a> {
 }
 
 pub fn provision(args: ProvisionArgs<'_>) -> Result<()> {
-    ensure_sshpass()?;
     let script = args.scripts_dir.join(format!("provision-{}.sh", args.kind));
     if !script.exists() {
         return Err(ProvisionError::ScriptMissing(script));
@@ -172,7 +172,6 @@ pub fn provision(args: ProvisionArgs<'_>) -> Result<()> {
 /// subsequent `bakery up` still handles stale registrations via
 /// `config.sh --replace`.
 pub fn remove(host: &str, user: &str, password: &str, token: &str) -> Result<()> {
-    ensure_sshpass()?;
     let cmd = format!(
         "cd ~/actions-runner 2>/dev/null && \
          sudo ./svc.sh stop 2>/dev/null || true; \
@@ -181,9 +180,7 @@ pub fn remove(host: &str, user: &str, password: &str, token: &str) -> Result<()>
          ./config.sh remove --token {} || true",
         shell_quote(token)
     );
-    let _ = Command::new("sshpass")
-        .args(["-p", password, "ssh"])
-        .args(SSH_OPTS)
+    let _ = guest_command("ssh", password)
         .arg(format!("{user}@{host}"))
         .arg(&cmd)
         .status();
@@ -191,9 +188,7 @@ pub fn remove(host: &str, user: &str, password: &str, token: &str) -> Result<()>
 }
 
 fn ssh_run(password: &str, dest: &str, cmd: &str) -> Result<()> {
-    let status = Command::new("sshpass")
-        .args(["-p", password, "ssh"])
-        .args(SSH_OPTS)
+    let status = guest_command("ssh", password)
         .arg(dest)
         .arg(cmd)
         .status()
@@ -211,9 +206,7 @@ fn ssh_run(password: &str, dest: &str, cmd: &str) -> Result<()> {
 }
 
 fn scp(password: &str, src: &Path, dest: &str) -> Result<()> {
-    let status = Command::new("sshpass")
-        .args(["-p", password, "scp"])
-        .args(SSH_OPTS)
+    let status = guest_command("scp", password)
         .arg(src)
         .arg(dest)
         .status()

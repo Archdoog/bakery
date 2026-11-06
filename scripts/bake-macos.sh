@@ -46,20 +46,21 @@ readonly GUEST_USER=admin
 readonly GUEST_PASS=admin
 readonly INSTALL_SCRIPT="$HERE/bake/macos-install.sh"
 
-command -v sshpass >/dev/null \
-  || { echo "sshpass not found — brew install sshpass" >&2; exit 1; }
 command -v tart >/dev/null \
   || { echo "tart not found — brew install cirruslabs/cli/tart" >&2; exit 1; }
 [[ -f "$INSTALL_SCRIPT" ]] \
   || { echo "missing $INSTALL_SCRIPT" >&2; exit 1; }
 
 readonly SSH_OPTS=(-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR -o ConnectTimeout=15 -o PubkeyAuthentication=no -o PreferredAuthentications=password -o IdentitiesOnly=yes)
-ssh_run()  { sshpass -p "$GUEST_PASS" ssh "${SSH_OPTS[@]}" "$GUEST_USER@$1" "$2"; }
-scp_to()   { sshpass -p "$GUEST_PASS" scp "${SSH_OPTS[@]}" "$2" "$GUEST_USER@$1:$3"; }
-scp_from() { sshpass -p "$GUEST_PASS" scp "${SSH_OPTS[@]}" "$GUEST_USER@$1:$2" "$3"; }
+# On a macOS 27 host, sshpass fails about 1 login in 4: ssh logs "can't open /dev/tty",
+# sends empty passwords, and sshd answers "Permission denied".
+export SSH_ASKPASS="$HERE/bake/guest-askpass.sh" SSH_ASKPASS_REQUIRE=force BAKE_GUEST_PASS="$GUEST_PASS"
+ssh_run()  { ssh "${SSH_OPTS[@]}" "$GUEST_USER@$1" "$2"; }
+scp_to()   { scp "${SSH_OPTS[@]}" "$2" "$GUEST_USER@$1:$3"; }
+scp_from() { scp "${SSH_OPTS[@]}" "$GUEST_USER@$1:$2" "$3"; }
 
 # One guest runs at a time. The EXIT trap stops it and deletes the donor.
-VM_NAME="" VM_PID="" VM_IP=""
+VM_NAME="" VM_PID="" VM_IP="" PARTIAL_GOLDEN=""
 # Wait up to 2 min for `tart run` to exit, then end it. Sometimes `tart run`
 # stays alive after the guest stops, and an unbounded wait hangs the bake.
 wait_vm_exit() {
@@ -78,6 +79,8 @@ cleanup() {
     wait_vm_exit
   fi
   tart delete "$RUNTIME_DONOR_NAME" >/dev/null 2>&1 || true
+  # `bakery up` clones the golden by name and cannot detect an unfinished bake.
+  [[ -z "$PARTIAL_GOLDEN" ]] || tart delete "$PARTIAL_GOLDEN" >/dev/null 2>&1 || true
 }
 trap cleanup EXIT INT TERM
 
@@ -171,6 +174,7 @@ echo ">>> iOS $MAESTRO_IOS_RUNTIME_VERSION runtime image: $RUNTIME_IMAGE"
 
 echo ">>> cloning $SOURCE_IMAGE -> $DEST_NAME"
 tart clone "$SOURCE_IMAGE" "$DEST_NAME"
+PARTIAL_GOLDEN="$DEST_NAME"
 tart set "$DEST_NAME" --cpu "$BAKE_CPU" --memory "$BAKE_MEM_MB" --disk-size "$BAKE_DISK_GB"
 boot_vm "$DEST_NAME"
 IP="$VM_IP"
@@ -186,6 +190,7 @@ ssh_run "$IP" "chmod +x /tmp/macos-install.sh && IOS_RUNTIME_VERSION='$IOS_RUNTI
 
 echo ">>> shutting guest down"
 shutdown_vm
+PARTIAL_GOLDEN=""
 
 echo ">>> done. Golden VM: $DEST_NAME"
 echo "    Next: set runners.yaml -> image: $DEST_NAME, then \`bakery up macos\`"
