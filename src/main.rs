@@ -223,7 +223,6 @@ fn cmd_up(cfg: &FleetConfig, only: Option<HashSet<String>>, force: bool) -> Resu
         }
     }
 
-    provision::ensure_sshpass()?;
     let pat = cfg.pat()?;
 
     let targets = cfg.groups().iter().flat_map(|g| {
