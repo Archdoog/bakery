@@ -38,6 +38,9 @@ pub(crate) enum Cmd {
         /// Seconds between fleet checks.
         #[arg(long, default_value_t = 15, value_parser = clap::value_parser!(u64).range(1..))]
         interval: u64,
+        /// Proceed even if the fleet exceeds the host budget.
+        #[arg(long)]
+        force: bool,
     },
     /// Stop runners and remove them from GitHub.
     Down {

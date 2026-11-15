@@ -37,9 +37,12 @@ pub(crate) fn run(cli: Cli) -> Result<u8> {
         Cmd::Up { names, force } => {
             load_cfg(&cli.config).and_then(|c| up::run(&c, names_filter(&names), force))
         }
-        Cmd::Watch { names, interval } => {
-            load_cfg(&cli.config).and_then(|c| watch::run(&c, names_filter(&names), interval))
-        }
+        Cmd::Watch {
+            names,
+            interval,
+            force,
+        } => load_cfg(&cli.config)
+            .and_then(|c| watch::run(&c, names_filter(&names), interval, force)),
         Cmd::Down { names, destroy } => {
             load_cfg(&cli.config).and_then(|c| down::run(&c, names_filter(&names), destroy))
         }

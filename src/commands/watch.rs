@@ -10,10 +10,16 @@ use anyhow::{bail, Result};
 use std::{collections::HashSet, fs, thread::sleep, time::Duration};
 
 /// Maintain ephemeral runners from `cfg` selected by `only`, with `interval` seconds between checks.
+/// Use `force` to proceed when the fleet exceeds the host budget.
 ///
 /// # Errors
 /// Returns an error if a required host, configuration, or service operation fails.
-pub(super) fn run(cfg: &FleetConfig, only: Option<HashSet<String>>, interval: u64) -> Result<u8> {
+pub(super) fn run(
+    cfg: &FleetConfig,
+    only: Option<HashSet<String>>,
+    interval: u64,
+    force: bool,
+) -> Result<u8> {
     let targets: Vec<_> = cfg
         .groups()
         .iter()
@@ -30,7 +36,13 @@ pub(super) fn run(cfg: &FleetConfig, only: Option<HashSet<String>>, interval: u6
     let hr = host::detect()?;
     let problems = host::check_fit(hr, cfg.reserve(), cfg.groups(), host::DEFAULT_OVERCOMMIT);
     if !problems.is_empty() {
-        bail!("The fleet exceeds the host budget: {problems:?}");
+        if !force {
+            bail!("The fleet exceeds the host budget: {problems:?}. Use --force to proceed.");
+        }
+        println!("Fleet does NOT fit (proceeding with --force):");
+        for problem in &problems {
+            println!("  ! {problem}");
+        }
     }
     let pat = cfg.pat()?;
     fs::create_dir_all(logs_dir())?;

@@ -28,6 +28,7 @@ bakery watch
 ```
 
 `watch` maintains ephemeral runners and checks every 15 seconds (`--interval` changes this).
+Use `bakery watch --force` to proceed when the fleet exceeds the host budget.
 After each job, it saves diagnostics under `logs/` and replaces the VM from its golden.
 Keep the watcher active, or run it through a service manager.
 Keep the golden images available. Delete old diagnostic archives as needed.
