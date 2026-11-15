@@ -77,7 +77,6 @@ impl FleetConfig {
 
     /// Read the GitHub PAT from the env var named by `github.token_env`.
     pub fn pat(&self) -> Result<String, PatMissing> {
-        std::env::var(&self.github.token_env)
-            .map_err(|_| PatMissing(self.github.token_env.clone()))
+        std::env::var(&self.github.token_env).map_err(|_| PatMissing(self.github.token_env.clone()))
     }
 }

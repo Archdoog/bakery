@@ -1,7 +1,7 @@
 #!/bin/bash
 # Installs, configures, and starts a GitHub Actions runner inside a macOS guest.
-# Run via SSH from the host. All args are required.
-# Args: ORG REGISTRATION_TOKEN NAME LABELS_CSV RUNNER_VERSION
+# Run via SSH from the host. The first five arguments are required.
+# Args: ORG REGISTRATION_TOKEN NAME LABELS_CSV RUNNER_VERSION [EPHEMERAL]
 set -euo pipefail
 
 ORG="$1"
@@ -9,6 +9,11 @@ TOKEN="$2"
 NAME="$3"
 LABELS="$4"
 VERSION="$5"
+EPHEMERAL="${6:-false}"
+set --
+if [[ "$EPHEMERAL" == "true" ]]; then
+  set -- --ephemeral
+fi
 
 RUNNER_DIR="$HOME/actions-runner"
 mkdir -p "$RUNNER_DIR"
@@ -78,7 +83,7 @@ rm -f .runner* .credentials*
   --token  "${TOKEN}" \
   --name   "${NAME}" \
   --labels "${LABELS}" \
-  --unattended --replace
+  --unattended --replace "$@"
 
 # actions-runner runs $ACTIONS_RUNNER_HOOK_JOB_COMPLETED after every job. We
 # use it to evict the parts of the workspace that bloat fastest: GHA's own

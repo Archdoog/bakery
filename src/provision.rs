@@ -11,13 +11,20 @@ use thiserror::Error;
 /// Common SSH options: no host-key prompts, short connect timeout, and force
 /// password auth so sshd doesn't count agent keys against MaxAuthTries.
 const SSH_OPTS: &[&str] = &[
-    "-o", "StrictHostKeyChecking=no",
-    "-o", "UserKnownHostsFile=/dev/null",
-    "-o", "LogLevel=ERROR",
-    "-o", "ConnectTimeout=15",
-    "-o", "PubkeyAuthentication=no",
-    "-o", "PreferredAuthentications=password",
-    "-o", "IdentitiesOnly=yes",
+    "-o",
+    "StrictHostKeyChecking=no",
+    "-o",
+    "UserKnownHostsFile=/dev/null",
+    "-o",
+    "LogLevel=ERROR",
+    "-o",
+    "ConnectTimeout=15",
+    "-o",
+    "PubkeyAuthentication=no",
+    "-o",
+    "PreferredAuthentications=password",
+    "-o",
+    "IdentitiesOnly=yes",
 ];
 
 #[derive(Debug, Error)]
@@ -37,6 +44,12 @@ pub enum ProvisionError {
         src: PathBuf,
         dest: String,
         status: ExitStatus,
+    },
+    #[error("Cannot create diagnostic archive {path}")]
+    ArchiveFile {
+        path: PathBuf,
+        #[source]
+        source: io::Error,
     },
     #[error("SSH to {host} never came up after {after_s}s")]
     Timeout { host: String, after_s: u64 },
@@ -125,6 +138,7 @@ pub struct ProvisionArgs<'a> {
     pub token: &'a str,
     pub name: &'a str,
     pub labels: &'a [String],
+    pub ephemeral: bool,
     pub runner_version: &'a str,
     pub scripts_dir: &'a Path,
 }
@@ -148,13 +162,14 @@ pub fn provision(args: ProvisionArgs<'_>) -> Result<()> {
 
     let labels_csv = args.labels.join(",");
     let remote_cmd = format!(
-        "chmod +x {remote} && {remote} {org} {token} {name} {labels} {ver}",
+        "chmod +x {remote} && {remote} {org} {token} {name} {labels} {ver} {ephemeral}",
         remote = remote_path,
         org = shell_quote(args.org),
         token = shell_quote(args.token),
         name = shell_quote(args.name),
         labels = shell_quote(&labels_csv),
         ver = shell_quote(args.runner_version),
+        ephemeral = args.ephemeral,
     );
     ssh_run(
         args.password,
@@ -249,4 +264,32 @@ fn is_shell_safe(b: u8) -> bool {
         b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9'
             | b'@' | b'%' | b'+' | b'=' | b':' | b',' | b'.' | b'/' | b'-' | b'_'
     )
+}
+
+/// Copy diagnostics from `host` to `destination` with the guest `user` and `password`.
+///
+/// # Errors
+/// Returns an error if SSH or the local file operation fails.
+pub fn archive_logs(host: &str, user: &str, password: &str, destination: &Path) -> Result<()> {
+    let file =
+        std::fs::File::create(destination).map_err(|source| ProvisionError::ArchiveFile {
+            path: destination.to_path_buf(),
+            source,
+        })?;
+    let status = guest_command("ssh", password)
+        .arg(format!("{user}@{host}"))
+        .arg("tar -czf - -C ~/actions-runner _diag")
+        .stdout(file)
+        .status()
+        .map_err(|source| ProvisionError::Spawn {
+            cmd: "ssh".into(),
+            source,
+        })?;
+    if !status.success() {
+        return Err(ProvisionError::SshFailed {
+            host: host.into(),
+            status,
+        });
+    }
+    Ok(())
 }

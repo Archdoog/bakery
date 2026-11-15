@@ -50,3 +50,21 @@ pub fn load(path: &Path) -> Result<FleetConfig, Error> {
     }
     Ok(cfg)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn yaml_example_enables_ephemeral_and_omission_defaults_to_persistent() {
+        let yaml = include_str!("../runners.yaml.example");
+        let cfg: FleetConfig = serde_yaml_ng::from_str(yaml).unwrap();
+        assert!(cfg.runners.iter().all(|g| g.ephemeral));
+        let cfg: FleetConfig =
+            serde_yaml_ng::from_str(&yaml.replace("ephemeral: true", "ephemeral: false")).unwrap();
+        assert!(cfg.runners.iter().all(|g| !g.ephemeral));
+        let cfg: FleetConfig =
+            serde_yaml_ng::from_str(&yaml.replace("    ephemeral: true\n", "")).unwrap();
+        assert!(cfg.runners.iter().all(|g| !g.ephemeral));
+    }
+}
