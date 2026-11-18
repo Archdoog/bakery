@@ -19,7 +19,13 @@ RUNNER_DIR="$HOME/actions-runner"
 mkdir -p "$RUNNER_DIR"
 cd "$RUNNER_DIR"
 
-if [[ ! -x ./config.sh ]]; then
+sudo ./svc.sh stop 2>/dev/null || true
+sudo ./svc.sh uninstall 2>/dev/null || true
+pkill -f Runner.Listener || true
+sleep 1
+
+INSTALLED_VERSION="$(./bin/Runner.Listener --version 2>/dev/null || true)"
+if [[ ! -x ./config.sh || "$INSTALLED_VERSION" != "$VERSION" ]]; then
   curl -fsSL -o runner.tar.gz \
     "https://github.com/actions/runner/releases/download/v${VERSION}/actions-runner-linux-arm64-${VERSION}.tar.gz"
   tar xzf runner.tar.gz
@@ -29,11 +35,6 @@ if [[ ! -x ./config.sh ]]; then
     sudo ./bin/installdependencies.sh || true
   fi
 fi
-
-sudo ./svc.sh stop 2>/dev/null || true
-sudo ./svc.sh uninstall 2>/dev/null || true
-pkill -f Runner.Listener || true
-sleep 1
 
 # config.sh refuses if the runner is still configured locally; force-clean.
 rm -f .runner .credentials .credentials_rsaparams

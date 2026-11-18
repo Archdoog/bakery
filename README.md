@@ -111,7 +111,7 @@ runners:
 | `resources.cpu` / `memory_gb` | Cores and GB per VM. `plan` checks the fleet against the host budget. |
 | `resources.disk_gb` | Minimum disk size in GB. Zero or omission keeps the image size. Tart can grow disks only. |
 | `labels` | Labels for workflow `runs-on` selection, such as `[self-hosted, macos, arm64, xcode]`. |
-| `runner_version` | Optional top-level Actions runner version. Defaults to `2.329.0`. |
+| `runner_version` | Optional top-level Actions runner version. Defaults to `latest`, resolved from GitHub for each provisioning operation. Set a release number to pin it. |
 
 The macOS golden includes Xcode and Android tools.
 Bake options, including simulator runtime sources, appear in `scripts/bake-macos.sh`.

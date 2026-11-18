@@ -117,6 +117,8 @@ pub(crate) fn bring_up(cfg: &FleetConfig, g: &RunnerGroup, name: &str, pat: &str
         }
     }
 
+    let runner_version = github::resolve_runner_version(&cfg.runner_version, pat)?;
+    println!("[{name}] provisioning runner version {runner_version}");
     let token = github::registration_token(&cfg.github.org, pat)?;
     provision::provision(provision::ProvisionArgs {
         kind: g.kind.as_str(),
@@ -128,7 +130,7 @@ pub(crate) fn bring_up(cfg: &FleetConfig, g: &RunnerGroup, name: &str, pat: &str
         name,
         labels: &g.labels,
         ephemeral: g.ephemeral,
-        runner_version: &cfg.runner_version,
+        runner_version: &runner_version,
         scripts_dir: &scripts_dir(),
     })?;
 

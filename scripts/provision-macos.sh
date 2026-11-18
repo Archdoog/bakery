@@ -58,18 +58,19 @@ PLIST
 sudo launchctl bootout   system /Library/LaunchDaemons/com.bakery.timesync.plist 2>/dev/null || true
 sudo launchctl bootstrap system /Library/LaunchDaemons/com.bakery.timesync.plist 2>/dev/null || true
 
-if [[ ! -x ./config.sh ]]; then
-  curl -fsSL -o runner.tar.gz \
-    "https://github.com/actions/runner/releases/download/v${VERSION}/actions-runner-osx-arm64-${VERSION}.tar.gz"
-  tar xzf runner.tar.gz
-  rm runner.tar.gz
-fi
-
 # Stop any prior listener/service so --replace can reconfigure cleanly.
 ./svc.sh stop 2>/dev/null || true
 ./svc.sh uninstall 2>/dev/null || true
 pkill -f Runner.Listener || true
 sleep 1
+
+INSTALLED_VERSION="$(./bin/Runner.Listener --version 2>/dev/null || true)"
+if [[ ! -x ./config.sh || "$INSTALLED_VERSION" != "$VERSION" ]]; then
+  curl -fsSL -o runner.tar.gz \
+    "https://github.com/actions/runner/releases/download/v${VERSION}/actions-runner-osx-arm64-${VERSION}.tar.gz"
+  tar xzf runner.tar.gz
+  rm runner.tar.gz
+fi
 
 # config.sh refuses if any .runner* or .credentials* file is present. The
 # runner auto-updater renames these on upgrade (.runner_migrated,
