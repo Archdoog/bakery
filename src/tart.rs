@@ -106,7 +106,10 @@ pub fn cached_images() -> Result<Vec<String>> {
 
 /// Delete all OCI and IPSW cache entries. A budget of 0 GB keeps none.
 pub fn prune_caches() -> Result<()> {
-    run("prune", ["prune", "--entries", "caches", "--space-budget", "0"])
+    run(
+        "prune",
+        ["prune", "--entries", "caches", "--space-budget", "0"],
+    )
 }
 
 pub fn clone(source: &str, dest: &str) -> Result<()> {

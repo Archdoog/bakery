@@ -1,186 +1,118 @@
 # bakery
 
-Bakes Tart goldens and stamps GitHub Actions runner VMs from them — on a
-single Apple Silicon Mac. One YAML describes the fleet; `bakery` clones,
-boots, registers.
+Build Tart golden images and run GitHub Actions runner VMs on one Apple Silicon Mac.
 
-Goldens are the *tarts*. The CLI is the *bakery*. Runner VMs are the stamped
-clones.
+## Install and start
 
-## Install on a new Mac
-
-Prereqs: Apple Silicon, macOS 13+, GitHub PAT with `admin:org`.
+Requires macOS 13+ and a GitHub PAT with `admin:org` scope.
+Run commands from the repository root.
 
 ```sh
 brew install cirruslabs/cli/tart sshpass rustup
 rustup-init -y
 
 git clone git@github.com:Archdoog/bakery.git && cd bakery
-cargo install --path .                   # -> ~/.cargo/bin/bakery
-cp runners.yaml.example runners.yaml     # set github.org and per-class sizing
-export GH_PAT=ghp_...                    # or set `token_env` in runners.yaml
+cargo install --path .                   # Install to ~/.cargo/bin/bakery.
+cp runners.yaml.example runners.yaml     # Set github.org and per-group resources.
+export GH_PAT=ghp_...                    # Or set token_env in runners.yaml.
 ```
 
-On first `tart` run, macOS prompts for **Local Network** access. Allow it
-(System Settings → Privacy & Security → Local Network), otherwise the host
-can't reach VMs over vmnet and `bakery up` hangs on SSH.
-
-## Bake goldens
-
-Each class needs its golden built once.
+Edit `runners.yaml` for your organization and host resources.
+Allow Tart Local Network access when macOS asks.
 
 ```sh
-bakery build ubuntu      # ~15-20 min, ~3 GB download
-bakery build macos       # ~30-50 min, ~20 GB (iOS 27 + iOS 18.6 runtimes are ~8 GB each)
+bakery plan
+bakery build ubuntu
+bakery build macos
+bakery watch
 ```
 
-The macOS bake copies the iOS 18.6 simulator runtime (for Maestro) from the
-host into the guest, because Xcode 27 cannot download iOS 18 runtimes. The bake
-uses the first image that it finds:
+`watch` maintains ephemeral runners and checks every 15 seconds (`--interval` changes this).
+Use `bakery watch --force` to proceed when the fleet exceeds the host budget.
+After each job, it saves diagnostics under `logs/` and replaces the VM from its golden.
+Keep the watcher active, or run it through a service manager.
+Keep the golden images available. Delete old diagnostic archives as needed.
 
-1. `MAESTRO_IOS_RUNTIME_DMG`.
-2. `state/ios-18.6-simulator-runtime.dmg`.
-3. The runtime from the host's Xcode, if the host has Xcode with iOS 18.6.
-4. A new download. The bake starts a temporary Xcode 26 guest
-   (`RUNTIME_DONOR_SOURCE`, default `…macos-tahoe-xcode:26.5`), downloads the
-   runtime there, and saves it to `state/`. The first bake on a new host pulls
-   that image (~70 GB) and the runtime (~9 GB). Then the bake deletes the
-   guest and the image. Later bakes use the copy in `state/`.
+## Update, reset, and stop
 
-Add a new golden: drop `scripts/bake-<name>.sh` + `scripts/bake/<name>-install.sh`;
-`bakery build <name>` picks it up.
-
-### Bumping a tool version (e.g. Xcode)
-
-Tool versions live in the bake scripts — Xcode comes from the Cirrus base image
-(`BAKE_SOURCE` in `scripts/bake-macos.sh`, default `…macos-tahoe-xcode:27`),
-others from `scripts/bake/<name>-install.sh` (e.g. `IOS_RUNTIME_VERSION`). Pin
-the version, re-bake, then re-clone the runners:
-
-```sh
-# Xcode 27.1 (Cirrus publishes a matching tag) + its iOS runtime:
-tart delete macos
-BAKE_SOURCE=ghcr.io/cirruslabs/macos-tahoe-xcode:27.1 IOS_RUNTIME_VERSION=27.1 bakery build macos
-bakery recycle macos     # re-stamp runners from the new golden
-```
-
-Edit the script default if the bump is permanent rather than a one-off.
-
-## Up, down, status
-
-```sh
-bakery plan     # validate config, check host fit
-bakery up       # clone, boot, register
-bakery status   # list tracked runners
-bakery down     # stop VMs, deregister
-bakery recycle  # destroy + re-create from golden (wipes accumulated build cruft)
-```
-
-Targeted forms: `bakery up ubuntu` (group), `bakery up ubuntu-1` (one runner).
-Same on `down` and `recycle`.
-
-Verify on GitHub → **Org → Settings → Actions → Runners** — should show Idle.
-
-## Disk hygiene
-
-Self-hosted runners persist `_work/` across jobs, so build outputs, action
-caches, and (on macOS) DerivedData / Simulator devices accumulate. Two
-mechanisms keep that bounded:
-
-- **Per-job hook.** Every runner has an `ACTIONS_RUNNER_HOOK_JOB_COMPLETED`
-  pointing at `~/actions-runner/runner-hooks/job-completed.sh`. After each
-  job it clears `_work/_temp`, prunes `_work/_actions` and `_diag` entries
-  older than 7 days, and on macOS evicts the Xcode `ModuleCache.noindex`
-  and stale DerivedData / Simulator devices. Tool caches (`~/.gradle`,
-  `~/.cargo`, `/opt/hostedtoolcache`, Homebrew, CocoaPods) are left alone
-  — those are what make a warm self-hosted runner fast.
-- **`bakery recycle`** for the bulk reset. Tart clones are CoW so destroying
-  + re-cloning a runner takes ~30–60s and gives you a clean VM identical to
-  the golden. Run it nightly via `cron`/`launchd` when the queue is idle,
-  or on demand when a runner reports disk pressure.
-
-The host fills up too. A runner VM is an APFS clone, so it does not need the
-tart OCI cache or its golden after `up`. Use `bakery clean` to free that
-space:
-
-```sh
-bakery clean            # delete the tart OCI and IPSW caches, keep the goldens
-bakery clean --goldens  # also delete the goldens, on a host that is short of disk
-```
-
-- After `clean`, the next `bakery build` downloads its base image again.
-- After `clean --goldens`, do a `bakery build` before the next `recycle` or
-  new runner.
-- The clone, the golden, and the cache share disk blocks. Thus `clean` frees
-  less than the sizes in `tart list` show. It prints the real amount.
-
-## Updating after `git pull`
-
-`bakery up` is idempotent: golden-fingerprint drift triggers a re-clone;
-offline GitHub registrations get pruned and re-created.
+Stop the watcher before fleet changes. Wait until runners are idle before you recycle them.
 
 ```sh
 git pull
-cargo install --path .              # refresh the CLI
-
-# Re-bake any goldens whose scripts/bake/ changed:
-tart delete <name> && bakery build <name>
-
-bakery up                           # reconciles everything
+cargo install --path .
+bakery recycle
+bakery watch
 ```
 
-Full reset — drop everything and re-bake from scratch:
+If bake scripts change, delete and rebuild the affected golden before `recycle`.
+For example, run `tart delete ubuntu`, then `bakery build ubuntu`.
 
 ```sh
-bakery down --destroy               # also `tart delete` each child clone
-tart delete macos ubuntu            # drop goldens
-bakery build macos && bakery build ubuntu
-bakery up
+bakery status
+bakery down --destroy
+bakery clean
 ```
 
-## Workflow labels
+Stop the watcher before `down`. `clean` deletes Tart caches and keeps the goldens.
+`clean --goldens` also deletes the goldens. Rebuild them before the next runner replacement.
 
-Each class in `runners.yaml` advertises a stable label set. Workflows pick
-classes by listing the labels they need:
+`up`, `down`, `recycle`, and `watch` accept group or runner names, such as `ubuntu` or `ubuntu-1`.
+For persistent groups (`ephemeral: false`), use `bakery up` and recycle when needed.
+`up` alone does not replace runners after jobs. Use `bakery --help` for all commands.
+
+## Fleet configuration
+
+The example enables a fresh VM for every job on both runner groups.
 
 ```yaml
-jobs:
-  ios:      { runs-on: [self-hosted, macos, arm64, xcode] }
-  android:  { runs-on: [self-hosted, macos, arm64, android] }
-  web:      { runs-on: [self-hosted, linux, arm64, node] }
-  python:   { runs-on: [self-hosted, linux, arm64, python] }
-  rust:     { runs-on: [self-hosted, linux, arm64, rust] }
+github:
+  org: my-org
+  token_env: GH_PAT
+
+host:
+  reserve:
+    cpu: 2
+    memory_gb: 8
+
+runners:
+  - name: macos
+    kind: macos
+    image: macos
+    count: 2
+    ephemeral: true
+    resources:
+      cpu: 3
+      memory_gb: 10
+      disk_gb: 180
+    labels: [self-hosted, macos, arm64, xcode, android]
+
+  - name: ubuntu
+    kind: linux
+    image: ubuntu
+    count: 1
+    ephemeral: true
+    resources:
+      cpu: 2
+      memory_gb: 4
+      disk_gb: 40
+    labels: [self-hosted, linux, arm64, node, python, rust]
 ```
 
-## Caveats
+| Setting | Meaning |
+| --- | --- |
+| `github.org` | Organization that owns the runners. |
+| `github.token_env` | Environment variable with the PAT. Defaults to `GH_PAT`. |
+| `host.reserve` | CPU cores and memory for the host. Defaults to 4 cores and 8 GB. |
+| `runners[].name` | Group name. Bakery names its VMs `<name>-1`, `<name>-2`, and so on. |
+| `kind` | Guest platform: `macos` or `linux`. Selects the provisioning script. |
+| `image` | Golden image to clone. Local goldens come from `bakery build <image>`. |
+| `count` | Number of runners in the group. A host supports at most two macOS guests. |
+| `ephemeral` | `true` limits each runner to one job. `watch` replaces it afterward. Omission defaults to `false`. |
+| `resources.cpu` / `memory_gb` | Cores and GB per VM. `plan` checks the fleet against the host budget. |
+| `resources.disk_gb` | Minimum disk size in GB. Zero or omission keeps the image size. Tart can grow disks only. |
+| `labels` | Labels for workflow `runs-on` selection, such as `[self-hosted, macos, arm64, xcode]`. |
+| `runner_version` | Optional top-level Actions runner version. Defaults to `latest`, resolved from GitHub for each provisioning operation. Set a release number to pin it. |
 
-- **2 macOS guests max** per host (Apple EULA). Linux is unbounded.
-- **Android emulator on M1/M2** falls back to TCG software emulation
-  (10-50× slower — no nested virtualization). Route `connectedAndroidTest`
-  to `runs-on: macos-latest`, or use an M3+ host.
-- **Node projects must pin `packageManager`** — ubuntu enables corepack
-  instead of a global `pnpm`.
-
-## Layout
-
-```
-src/                  Rust CLI (plan / up / down / recycle / status / build / clean)
-scripts/
-  provision-*.sh      runs inside each runner on first boot
-  bake-*.sh           host-side orchestrator for `bakery build <name>`
-  bake/*-install.sh   runs inside the golden during bake
-runners.yaml          your fleet (gitignored)
-runners.yaml.example  template
-state/                per-runner JSON (gitignored)
-logs/                 tart stdout/stderr per VM (gitignored)
-```
-
-## Troubleshooting
-
-- `sshpass not found` → `brew install sshpass`.
-- `bakery up` hangs on SSH → Local Network permission denied for `tart`.
-- `config.sh` token errors → PAT missing `admin:org`, or token >1 h old;
-  rerun.
-- Runner stays Offline → check `logs/<name>.log`; `tart ip <name>` + ssh
-  in for live debug.
-- Plan fails resource budget → shrink per-VM resources or `host.reserve`.
+The macOS golden includes Xcode and Android tools.
+Bake options, including simulator runtime sources, appear in `scripts/bake-macos.sh`.
+See [CONTRIBUTING.md](CONTRIBUTING.md) for development and additional golden images.

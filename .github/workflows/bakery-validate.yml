@@ -20,6 +20,12 @@ jobs:
       - run: |
           sw_vers
           xcodebuild -version
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: '3.3'
+      - name: Check Ruby runtime libraries
+        run: |
+          ruby -ropenssl -rpsych -e 'puts RUBY_DESCRIPTION; puts OpenSSL::OPENSSL_LIBRARY_VERSION; puts Psych.libyaml_version.join(".")'
 
   android-mac:
     runs-on: [self-hosted, macos, arm64, android]
