@@ -51,6 +51,27 @@ struct RunnersList {
     runners: Vec<Runner>,
 }
 
+#[derive(Debug, Deserialize)]
+struct Release {
+    tag_name: String,
+}
+
+/// Resolve `version` to a release number, using `pat` for GitHub authentication.
+///
+/// # Errors
+/// Return an error if GitHub cannot supply the latest release.
+pub(crate) fn resolve_runner_version(version: &str, pat: &str) -> Result<String> {
+    if version != "latest" {
+        return Ok(version.to_string());
+    }
+    latest_runner_version(&format!("{API}/repos/actions/runner/releases/latest"), pat)
+}
+
+fn latest_runner_version(url: &str, pat: &str) -> Result<String> {
+    let release: Release = call_json(ureq::get(url), pat)?;
+    Ok(release.tag_name.trim_start_matches('v').to_string())
+}
+
 pub fn registration_token(org: &str, pat: &str) -> Result<String> {
     let url = format!("{API}/orgs/{org}/actions/runners/registration-token");
     let resp: TokenResp = call_json(ureq::post(&url), pat)?;
@@ -117,5 +138,66 @@ fn into_error(method: &str, url: &str, e: ureq::Error) -> GithubError {
             url: url.into(),
             message: t.to_string(),
         },
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::{Read, Write};
+    use std::net::TcpListener;
+    use std::thread;
+
+    fn release_response(status: &str, body: &str) -> (String, thread::JoinHandle<String>) {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}/releases/latest", listener.local_addr().unwrap());
+        let response = format!(
+            "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+            body.len()
+        );
+        let server = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            stream
+                .set_read_timeout(Some(Duration::from_secs(5)))
+                .unwrap();
+            let mut request = Vec::new();
+            let mut buffer = [0; 1024];
+            while !request.ends_with(b"\r\n\r\n") {
+                let count = stream.read(&mut buffer).unwrap();
+                assert_ne!(count, 0);
+                request.extend_from_slice(&buffer[..count]);
+            }
+            stream.write_all(response.as_bytes()).unwrap();
+            String::from_utf8(request).unwrap()
+        });
+        (url, server)
+    }
+
+    #[test]
+    fn latest_release_supplies_the_download_version() {
+        let (url, server) = release_response("200 OK", r#"{"tag_name":"v2.338.2"}"#);
+        assert_eq!(
+            latest_runner_version(&url, "test-token").unwrap(),
+            "2.338.2"
+        );
+        let request = server.join().unwrap().to_lowercase();
+        assert!(request.starts_with("get /releases/latest http/1.1\r\n"));
+        assert!(request.contains("authorization: bearer test-token\r\n"));
+    }
+
+    #[test]
+    fn unavailable_latest_release_returns_an_error() {
+        let (url, server) =
+            release_response("503 Service Unavailable", r#"{"message":"unavailable"}"#);
+        assert!(matches!(
+            latest_runner_version(&url, "test-token"),
+            Err(GithubError::Api { status: 503, .. })
+        ));
+        server.join().unwrap();
+    }
+
+    #[test]
+    fn pinned_versions_need_no_release_lookup() {
+        assert_eq!(resolve_runner_version("2.337.0", "").unwrap(), "2.337.0");
     }
 }
