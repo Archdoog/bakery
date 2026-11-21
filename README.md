@@ -74,6 +74,10 @@ host:
     cpu: 2
     memory_gb: 8
 
+root_images:
+  macos: ghcr.io/cirruslabs/macos-golden-gate-xcode:latest
+  ubuntu: ghcr.io/cirruslabs/ubuntu:latest
+
 runners:
   - name: macos
     kind: macos
@@ -101,6 +105,7 @@ runners:
 | Setting | Meaning |
 | --- | --- |
 | `github.org` | Organization that owns the runners. |
+| `root_images` | Shared root image for each bake script. Remote references without a tag use `latest`. |
 | `github.token_env` | Environment variable with the PAT. Defaults to `GH_PAT`. |
 | `host.reserve` | CPU cores and memory for the host. Defaults to 4 cores and 8 GB. |
 | `runners[].name` | Group name. Bakery names its VMs `<name>-1`, `<name>-2`, and so on. |
@@ -113,6 +118,7 @@ runners:
 | `labels` | Labels for workflow `runs-on` selection, such as `[self-hosted, macos, arm64, xcode]`. |
 | `runner_version` | Optional top-level Actions runner version. Defaults to `latest`, resolved from GitHub for each provisioning operation. Set a release number to pin it. |
 
+See [Golden images](docs/golden-images.md) for root image settings and overrides.
 The macOS golden includes Xcode and Android tools.
 Set Xcode versions and simulator targets under `goldens.<image>` in the fleet YAML.
 See [Apple toolchains](docs/apple-toolchains.md) for the schema, sources, and rebuild steps.

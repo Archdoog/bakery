@@ -24,6 +24,20 @@ impl Workspace {
         Self(root)
     }
 
+    fn record_root(&self) {
+        for image in ["macos", "ubuntu"] {
+            fs::write(
+                self.0.join(format!("scripts/bake-{image}.sh")),
+                "#!/bin/bash\nprintf '%s' \"$BAKE_SOURCE\" > root.txt\n",
+            )
+            .unwrap();
+        }
+    }
+
+    fn root(&self) -> String {
+        fs::read_to_string(self.0.join("root.txt")).unwrap()
+    }
+
     fn run(&self, args: &[&str]) -> Output {
         Command::new(env!("CARGO_BIN_EXE_bakery"))
             .current_dir(&self.0)
@@ -99,8 +113,130 @@ fn ephemeral_fleet_passes_xcode_configuration_to_bake() {
     assert!(workspace.run(&["build", "macos"]).status.success());
     let received = fs::read_to_string(workspace.0.join("received.txt")).unwrap();
     let (source, manifest) = received.split_once('\n').unwrap();
-    assert_eq!(source, "custom-xcode-image");
+    assert_eq!(source, "ghcr.io/cirruslabs/macos-golden-gate-xcode:latest");
     let manifest: serde_json::Value = serde_json::from_str(manifest).unwrap();
     assert_eq!(manifest["default_xcode"], "26.5");
     assert_eq!(manifest["xcodes"][1]["version"], "26.5");
+    assert_eq!(manifest["xcodes"][0]["source"], "custom-xcode-image");
+}
+
+#[test]
+fn root_images_apply_to_both_bakes() {
+    let workspace = Workspace::new();
+    workspace.record_root();
+    fs::write(workspace.0.join("runners.yaml"), "github: {org: test}\nrunners: []\nroot_images: {macos: 'ghcr.io/example/macos', ubuntu: 'registry.example:5000/ubuntu'}\ngoldens: {macos: {xcodes: [{version: '27.2'}]}}\n").unwrap();
+    assert!(workspace.run(&["build", "macos"]).status.success());
+    assert_eq!(workspace.root(), "ghcr.io/example/macos:latest");
+    assert!(workspace.run(&["build", "ubuntu"]).status.success());
+    assert_eq!(workspace.root(), "registry.example:5000/ubuntu:latest");
+}
+
+#[test]
+fn root_image_defaults_tags_digests_and_local_names_reach_the_script() {
+    let workspace = Workspace::new();
+    workspace.record_root();
+    for (source, expected) in [
+        (None, "ghcr.io/cirruslabs/macos-golden-gate-xcode:latest"),
+        (Some("ghcr.io/example/macos"), "ghcr.io/example/macos:latest"),
+        (Some("ghcr.io/example/macos:27.2"), "ghcr.io/example/macos:27.2"),
+        (Some("ghcr.io/example/macos@sha256:0000000000000000000000000000000000000000000000000000000000000000"), "ghcr.io/example/macos@sha256:0000000000000000000000000000000000000000000000000000000000000000"),
+        (Some("local-root"), "local-root"),
+    ] {
+        let roots = source.map(|source| format!("root_images: {{macos: '{source}'}}\n")).unwrap_or_default();
+        fs::write(workspace.0.join("runners.yaml"), format!("github: {{org: test}}\nrunners: []\n{roots}")).unwrap();
+        assert!(workspace.run(&["build", "macos"]).status.success());
+        assert_eq!(workspace.root(), expected);
+    }
+    fs::write(
+        workspace.0.join("runners.yaml"),
+        "github: {org: test}\nrunners: []\nroot_images: {macos: 'local-root'}\n",
+    )
+    .unwrap();
+    assert!(workspace.run(&["build", "ubuntu"]).status.success());
+    assert_eq!(workspace.root(), "ghcr.io/cirruslabs/ubuntu:latest");
+}
+
+#[test]
+fn golden_override_and_environment_take_precedence_over_root_images() {
+    let workspace = Workspace::new();
+    workspace.record_root();
+    fs::write(workspace.0.join("custom.yaml"), "github: {org: test}\nrunners: []\nroot_images: {ubuntu: 'ghcr.io/example/shared'}\ngoldens: {custom: {source: 'ghcr.io/example/override:24.04'}}\n").unwrap();
+    assert!(workspace
+        .run(&["-c", "custom.yaml", "build", "ubuntu", "--as", "custom"])
+        .status
+        .success());
+    assert_eq!(workspace.root(), "ghcr.io/example/override:24.04");
+    let result = Command::new(env!("CARGO_BIN_EXE_bakery"))
+        .current_dir(&workspace.0)
+        .env("BAKE_SOURCE", "environment-root")
+        .args(["-c", "custom.yaml", "build", "ubuntu", "--as", "custom"])
+        .output()
+        .unwrap();
+    assert!(result.status.success());
+    assert_eq!(workspace.root(), "environment-root");
+}
+
+#[test]
+fn invalid_root_images_stop_before_the_bake_script() {
+    let workspace = Workspace::new();
+    for source in ["''", "\"bad\\nimage\""] {
+        fs::write(
+            workspace.0.join("runners.yaml"),
+            format!("github: {{org: test}}\nrunners: []\nroot_images: {{ubuntu: {source}}}\n"),
+        )
+        .unwrap();
+        let result = workspace.run(&["build", "ubuntu"]);
+        assert!(!result.status.success());
+        assert!(String::from_utf8_lossy(&result.stderr).contains("Invalid root image"));
+        assert!(!workspace.0.join("received.txt").exists());
+    }
+}
+
+#[test]
+fn configured_roots_reach_the_actual_bake_scripts() {
+    let workspace = Workspace::new();
+    let bin = workspace.0.join("bin");
+    fs::create_dir(&bin).unwrap();
+    let tart = bin.join("tart");
+    fs::write(
+        &tart,
+        "#!/bin/bash\n[[ \"$1\" == clone ]] || exit 43\nprintf '%s' \"$2\" > root.txt\nexit 42\n",
+    )
+    .unwrap();
+    fs::set_permissions(&tart, fs::Permissions::from_mode(0o755)).unwrap();
+    let sshpass = bin.join("sshpass");
+    fs::write(&sshpass, "#!/bin/bash\nexit 1\n").unwrap();
+    fs::set_permissions(sshpass, fs::Permissions::from_mode(0o755)).unwrap();
+    fs::create_dir(workspace.0.join("scripts/bake")).unwrap();
+    fs::write(workspace.0.join("runners.yaml"), "github: {org: test}\nrunners: []\nroot_images: {macos: 'ghcr.io/example/macos', ubuntu: 'ghcr.io/example/ubuntu'}\n").unwrap();
+    let path = std::env::join_paths(
+        std::iter::once(bin).chain(std::env::split_paths(&std::env::var_os("PATH").unwrap())),
+    )
+    .unwrap();
+    for image in ["macos", "ubuntu"] {
+        fs::copy(
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(format!("scripts/bake-{image}.sh")),
+            workspace.0.join(format!("scripts/bake-{image}.sh")),
+        )
+        .unwrap();
+        fs::write(
+            workspace.0.join(format!("scripts/bake/{image}-install.sh")),
+            "",
+        )
+        .unwrap();
+        let result = Command::new(env!("CARGO_BIN_EXE_bakery"))
+            .current_dir(&workspace.0)
+            .env("PATH", &path)
+            .env_remove("BAKE_SOURCE")
+            .args(["build", image])
+            .output()
+            .unwrap();
+        assert_eq!(
+            result.status.code(),
+            Some(42),
+            "{}",
+            String::from_utf8_lossy(&result.stderr)
+        );
+        assert_eq!(workspace.root(), format!("ghcr.io/example/{image}:latest"));
+    }
 }

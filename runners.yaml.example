@@ -7,6 +7,10 @@ host:
     cpu: 2
     memory_gb: 8
 
+root_images:
+  macos: ghcr.io/cirruslabs/macos-golden-gate-xcode:latest
+  ubuntu: ghcr.io/cirruslabs/ubuntu:latest
+
 goldens:
   macos:
     xcodes:

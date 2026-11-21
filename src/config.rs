@@ -27,10 +27,16 @@ pub enum Error {
     },
     #[error("duplicate runner group name: {0}")]
     DuplicateGroup(String),
+    #[error(
+        "Invalid root image for {image}: use a nonempty image name without control characters"
+    )]
+    InvalidRootImage { image: String },
     #[error("invalid simulator configuration for golden {golden}: {reason}")]
     InvalidSimulators { golden: String, reason: String },
     #[error("invalid Xcode configuration for golden {golden}: {reason}")]
     InvalidXcode { golden: String, reason: String },
+    #[error("Invalid golden source for {0}: use a nonempty image name without control characters")]
+    InvalidGoldenSource(String),
 }
 
 pub fn load(path: &Path) -> Result<FleetConfig, Error> {
@@ -55,6 +61,17 @@ fn validate(cfg: &FleetConfig) -> Result<(), Error> {
     for g in &cfg.runners {
         if !seen.insert(&g.name) {
             return Err(Error::DuplicateGroup(g.name.clone()));
+        }
+    }
+    for (image, source) in &cfg.root_images {
+        if image.trim().is_empty()
+            || image.chars().any(char::is_control)
+            || source.trim().is_empty()
+            || source.chars().any(char::is_control)
+        {
+            return Err(Error::InvalidRootImage {
+                image: image.clone(),
+            });
         }
     }
     for (golden, settings) in &cfg.goldens {
@@ -93,9 +110,7 @@ fn validate(cfg: &FleetConfig) -> Result<(), Error> {
             .as_deref()
             .is_some_and(|source| source.trim().is_empty() || source.chars().any(char::is_control))
         {
-            return Err(invalid_xcode(
-                "Golden source must contain a valid Tart image name",
-            ));
+            return Err(Error::InvalidGoldenSource(golden.clone()));
         }
         if settings
             .default_xcode

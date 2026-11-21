@@ -30,11 +30,14 @@ env:
   DEVELOPER_DIR: /Applications/Xcode-26.5.app/Contents/Developer
 ```
 
-The bake uses the first Xcode entry's source image as its base. By default,
-that source is `ghcr.io/cirruslabs/macos-tahoe-xcode:<version>`.
-Set an entry's `source` to use another Tart image. Set `goldens.<destination>.source`
-to select the golden's macOS base independently. An explicit `BAKE_SOURCE`
-environment variable overrides the YAML base source.
+The macOS root defaults to `ghcr.io/cirruslabs/macos-golden-gate-xcode:latest`.
+Set `root_images.macos` to choose another shared root image. A golden's `source`
+overrides that shared root. See [Golden images](golden-images.md) for image defaults
+and override rules.
+
+Xcode versions are independent of the root image. For an Xcode donor, the default
+source is `ghcr.io/cirruslabs/macos-tahoe-xcode:<version>`.
+Set an Xcode entry's `source` to use another donor image.
 
 For each missing Xcode version, the bake starts a temporary guest from that
 entry's source image. It copies Xcode into `state/xcode-<version>.tar` and then

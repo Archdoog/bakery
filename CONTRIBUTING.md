@@ -43,6 +43,7 @@ teach `bakery` about a new class, drop two scripts:
    image, boots it, runs the installer over SSH, shuts it down. Use
    `scripts/bake-ubuntu.sh` as a template; the contract is that it accepts an
    optional first argument for the destination VM name and exits 0 on success.
+   Bake scripts must read `BAKE_SOURCE` for the selected root image.
 2. `scripts/bake/<name>-install.sh` — runs *inside* the VM during bake.
    Installs whatever toolchain the runner class needs. Should be idempotent;
    `bakery build <name>` re-runs the whole pipeline on each invocation.

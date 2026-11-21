@@ -51,18 +51,23 @@ pub(super) fn run(config_path: &Path, image: Option<&str>, as_name: Option<&str>
     );
     let mut command = Command::new(&script);
     command.arg(dest);
-    if image == "macos" {
-        let cfg = super::load_cfg(config_path)?;
-        let golden = cfg.goldens.get(dest).cloned().unwrap_or_default();
-        if std::env::var_os("BAKE_SOURCE").is_none() {
-            if let Some(source) = golden
-                .source
-                .clone()
-                .or_else(|| golden.xcodes.first().map(|xcode| xcode.source_image()))
-            {
-                command.env("BAKE_SOURCE", source);
-            }
+    let cfg = if image == "macos" || config_path.exists() {
+        Some(super::load_cfg(config_path)?)
+    } else {
+        None
+    };
+    if std::env::var_os("BAKE_SOURCE").is_none() {
+        let source = cfg.as_ref().and_then(|cfg| cfg.root_image(image, dest));
+        if let Some(source) = source {
+            command.env("BAKE_SOURCE", source);
         }
+    }
+    if image == "macos" {
+        let golden = cfg
+            .as_ref()
+            .and_then(|cfg| cfg.goldens.get(dest))
+            .cloned()
+            .unwrap_or_default();
         command.env("BAKERY_APPLE_JSON", serde_json::to_string(&golden)?);
         command.env("BAKERY_BIN", std::env::current_exe()?);
         command.env(
