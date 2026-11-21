@@ -8,13 +8,13 @@ The example preserves the iOS 27.0 and iOS 18.6 devices used by existing jobs.
 goldens:
   macos:
     xcodes:
-      - version: "27"
+      - version: "27.2"
       - version: "26.5"
-    default_xcode: "27"
+    default_xcode: "27.2"
     simulators:
       - platform: iOS
         version: "27.0"
-        xcode: "27"
+        xcode: "27.2"
         devices:
           - name: iPhone 17 Pro Max
             device_type: com.apple.CoreSimulator.SimDeviceType.iPhone-17-Pro-Max

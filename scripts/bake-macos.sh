@@ -5,7 +5,7 @@
 set -euo pipefail
 
 readonly HERE="$(cd "$(dirname "$0")" && pwd)"
-readonly SOURCE_IMAGE="${BAKE_SOURCE:-ghcr.io/cirruslabs/macos-tahoe-xcode:27}"
+readonly SOURCE_IMAGE="${BAKE_SOURCE:-ghcr.io/cirruslabs/macos-tahoe-xcode:27.2}"
 readonly DEST_NAME="${1:-macos}"
 readonly BAKE_CPU="${BAKE_CPU:-6}"
 readonly BAKE_MEM_MB="${BAKE_MEM_MB:-12288}"
