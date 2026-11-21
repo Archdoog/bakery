@@ -24,15 +24,15 @@ For real end-to-end testing you'll need a GitHub org and a PAT with
 ## Tests
 
 ```sh
+cargo test
 cargo check
 cargo clippy -- -D warnings
 cargo fmt -- --check
 ```
 
-There aren't unit tests checked in yet — the meaningful surface is host
-detection, fleet planning, and the bake/provision SSH dance, all of which are
-better tested end-to-end on a real host. PRs that add focused tests for pure
-logic (e.g. `host::check_fit`, label/group filtering) are very welcome.
+The tests check YAML validation, build configuration, and simulator installation
+with mocked commands. They do not start VMs or change installed simulators.
+A full bake still requires Tart and a macOS guest.
 
 ## Adding a new golden class
 

@@ -14,7 +14,9 @@ mod github;
 mod host;
 mod models;
 mod provision;
+mod simulators;
 mod tart;
+mod xcodes;
 
 use std::collections::{BTreeSet, HashSet};
 use std::fs;
@@ -70,6 +72,16 @@ struct Cli {
 
 #[derive(Subcommand, Debug)]
 enum Cmd {
+    #[command(hide = true)]
+    Xcodes {
+        #[command(subcommand)]
+        action: xcodes::Action,
+    },
+    #[command(hide = true)]
+    Simulators {
+        #[command(subcommand)]
+        action: simulators::Action,
+    },
     /// Validate config and check host resource fit.
     Plan,
     /// Clone, start, and register runners.
@@ -120,8 +132,11 @@ enum Cmd {
 fn main() -> ExitCode {
     let cli = Cli::parse();
     let rc = match cli.cmd {
-        // `build` is config-independent; load lazily for commands that need it.
-        Cmd::Build { image, as_name } => cmd_build(image.as_deref(), as_name.as_deref()),
+        Cmd::Xcodes { action } => xcodes::run(action).map_err(Into::into),
+        Cmd::Simulators { action } => simulators::run(action).map_err(Into::into),
+        Cmd::Build { image, as_name } => {
+            cmd_build(&cli.config, image.as_deref(), as_name.as_deref())
+        }
         Cmd::Plan => load_cfg(&cli.config).and_then(|c| cmd_plan(&c)),
         Cmd::Up { names, force } => {
             load_cfg(&cli.config).and_then(|c| cmd_up(&c, names_filter(&names), force))
@@ -158,7 +173,10 @@ fn cmd_plan(cfg: &FleetConfig) -> Result<u8> {
     let overcommit = host::DEFAULT_OVERCOMMIT;
     let b = host::budget(hr, reserve, overcommit);
     println!("Host:    {} cores, {} GB RAM", hr.cpu, hr.memory_gb);
-    println!("Reserve: {} cores, {} GB RAM", reserve.cpu, reserve.memory_gb);
+    println!(
+        "Reserve: {} cores, {} GB RAM",
+        reserve.cpu, reserve.memory_gb
+    );
     println!(
         "Budget:  {} cores, {} GB RAM ({:.2}x over-commit)",
         b.cpu, b.memory_gb, overcommit,
@@ -279,7 +297,10 @@ fn bring_up(cfg: &FleetConfig, g: &RunnerGroup, name: &str, pat: &str) -> Result
     let existing = github::find_runner(&cfg.github.org, pat, name)?;
     if matches!(&existing, Some(r) if r.status == "online") {
         println!("[{name}] runner online in GitHub; skipping provision");
-        state_write(name, &build_state(g, name, pid, &guest_ip, golden_fp.as_deref()))?;
+        state_write(
+            name,
+            &build_state(g, name, pid, &guest_ip, golden_fp.as_deref()),
+        )?;
         return Ok(());
     }
 
@@ -316,7 +337,10 @@ fn bring_up(cfg: &FleetConfig, g: &RunnerGroup, name: &str, pat: &str) -> Result
         );
     }
 
-    state_write(name, &build_state(g, name, pid, &guest_ip, golden_fp.as_deref()))?;
+    state_write(
+        name,
+        &build_state(g, name, pid, &guest_ip, golden_fp.as_deref()),
+    )?;
     println!("[{name}] runner registered and online");
     Ok(())
 }
@@ -331,8 +355,7 @@ fn reclone_if_drifted(name: &str, image: &str, golden_fp: Option<&str>) -> Resul
     let Some(stored) = state_read(name)? else {
         return Ok(());
     };
-    let (Some(golden), Some(stored_fp)) = (golden_fp, not_empty(&stored.golden_fingerprint))
-    else {
+    let (Some(golden), Some(stored_fp)) = (golden_fp, not_empty(&stored.golden_fingerprint)) else {
         return Ok(());
     };
     if stored_fp == golden {
@@ -476,7 +499,7 @@ fn cmd_status() -> Result<u8> {
     Ok(0)
 }
 
-fn cmd_build(image: Option<&str>, as_name: Option<&str>) -> Result<u8> {
+fn cmd_build(config_path: &Path, image: Option<&str>, as_name: Option<&str>) -> Result<u8> {
     let dir = scripts_dir();
     let mut available: Vec<String> = fs::read_dir(&dir)
         .with_context(|| format!("reading {}", dir.display()))?
@@ -517,8 +540,28 @@ fn cmd_build(image: Option<&str>, as_name: Option<&str>) -> Result<u8> {
         ">>> building golden {dest:?} via {}",
         script.file_name().and_then(|s| s.to_str()).unwrap_or("")
     );
-    let status = Command::new(&script)
-        .arg(dest)
+    let mut command = Command::new(&script);
+    command.arg(dest);
+    if image == "macos" {
+        let cfg = load_cfg(config_path)?;
+        let golden = cfg.goldens.get(dest).cloned().unwrap_or_default();
+        if std::env::var_os("BAKE_SOURCE").is_none() {
+            if let Some(source) = golden
+                .source
+                .clone()
+                .or_else(|| golden.xcodes.first().map(|xcode| xcode.source_image()))
+            {
+                command.env("BAKE_SOURCE", source);
+            }
+        }
+        command.env("BAKERY_APPLE_JSON", serde_json::to_string(&golden)?);
+        command.env("BAKERY_BIN", std::env::current_exe()?);
+        command.env(
+            "BAKERY_SIMULATORS_JSON",
+            serde_json::to_string(&golden.simulators)?,
+        );
+    }
+    let status = command
         .status()
         .with_context(|| format!("spawning {}", script.display()))?;
     Ok(status.code().unwrap_or(1).try_into().unwrap_or(1))
@@ -627,9 +670,10 @@ fn tracked_state() -> Result<Vec<StateFile>> {
     // dropping it makes `down` appear to succeed while leaving VMs running.
     let mut out = Vec::with_capacity(paths.len());
     for p in paths {
-        match fs::read_to_string(&p).map_err(anyhow::Error::from).and_then(
-            |s| -> Result<StateFile> { serde_json::from_str(&s).map_err(Into::into) },
-        ) {
+        match fs::read_to_string(&p)
+            .map_err(anyhow::Error::from)
+            .and_then(|s| -> Result<StateFile> { serde_json::from_str(&s).map_err(Into::into) })
+        {
             Ok(s) => out.push(s),
             Err(e) => eprintln!("warn: skipping {}: {e:#}", p.display()),
         }

@@ -1,9 +1,7 @@
 #!/bin/bash
 # Runs inside a macOS aarch64 guest (cloned from macos-tahoe-xcode) during
 # `bake-macos.sh`. Layers on top of the stock Cirrus Xcode image:
-#   - iOS simulator runtime $IOS_RUNTIME_VERSION (default 27.0) + iPhone 17 Pro Max device
-#   - iOS simulator runtime $MAESTRO_IOS_RUNTIME_VERSION (default 18.6) + iPhone 16
-#     device for Maestro smoke tests
+#   - Simulator runtimes and devices from runners.yaml
 #   - Temurin JDK 21 (Homebrew cask)
 #   - Android cmdline-tools + platform-tools + platforms;android-34 + build-tools;34.0.0
 #   - Android emulator + arm64-v8a system image (API 34)
@@ -23,10 +21,6 @@
 # macOS guests are EULA-capped at 2 per host and shouldn't be consumed by
 # work that has no macOS dependency.
 #
-# The stock image ships Xcode 27 with its matching iOS 27.x runtime. We pin the
-# point release so the golden does not drift with the base image. Maestro smoke
-# tests run on iOS 18, so the bake also adds the last iOS 18 runtime.
-#
 # Note: on M1/M2 hosts the Android emulator will run in TCG (software) mode
 # because there's no nested virtualization — expect 10-50x slower instrumentation
 # tests than on bare metal. Full acceleration requires M3+ with tart's
@@ -41,8 +35,6 @@ eval "$(/opt/homebrew/bin/brew shellenv 2>/dev/null)" || true
 # locked /opt/homebrew/Cellar/openssl@3".
 export HOMEBREW_NO_INSTALL_UPGRADE=1
 
-IOS_RUNTIME_VERSION="${IOS_RUNTIME_VERSION:-27.0}"
-MAESTRO_IOS_RUNTIME_VERSION="${MAESTRO_IOS_RUNTIME_VERSION:-18.6}"
 ANDROID_HOME="${ANDROID_HOME:-$HOME/Library/Android/sdk}"
 ANDROID_NDK_VERSION="${ANDROID_NDK_VERSION:-26.2.11394342}"
 CMDLINE_TOOLS_BUILD="${CMDLINE_TOOLS_BUILD:-11076708}"
@@ -71,109 +63,8 @@ if ! sudo grep -qE '^[[:space:]]*PerSourcePenalties[[:space:]]+no' /etc/ssh/sshd
 fi
 sudo sshd -t && echo ">>> sshd config OK" || echo ">>> WARN: sshd -t flagged the config"
 
-# ---- iOS simulator runtimes ------------------------------------------------
-
-echo ">>> Xcode info"
-xcodebuild -version
-
-# SSH comes up before the guest's auto-login finishes. Until then, simctl and
-# xcodebuild cannot connect to the simulator services. Wait for them.
-echo ">>> waiting for the simulator services"
-for _ in $(seq 60); do
-    xcrun simctl list runtimes >/dev/null 2>&1 && xcrun simctl runtime list >/dev/null 2>&1 && break
-    sleep 5
-done
-
-echo ">>> runtimes before"
-xcrun simctl list runtimes || true
-
-# Print the identifier of the available iOS <version> runtime, or nothing.
-runtime_id_for() {
-    xcrun simctl list runtimes -j | /usr/bin/python3 -c "
-import json, sys
-version = sys.argv[1]
-for r in json.load(sys.stdin)['runtimes']:
-    ok = r.get('isAvailable') and r.get('platform') == 'iOS'
-    if ok and r.get('version', '').startswith(version):
-        print(r['identifier']); break
-" "$1"
-}
-
-# Make sure that iOS <version> and device <name> of <type> are on the guest.
-# If the runtime is missing, Xcode downloads it. Xcode 16+ can pin a runtime
-# version with -buildVersion. The runtime ships as a signed distribution, so no
-# Apple ID is necessary.
-install_runtime_device() {
-    local version="$1" name="$2" type="$3" runtime_id
-    runtime_id=$(runtime_id_for "$version")
-    if [[ -z "$runtime_id" ]]; then
-        echo ">>> downloading iOS $version simulator runtime (~8GB, 15-25 min)"
-        xcodebuild -downloadPlatform iOS -buildVersion "$version"
-        runtime_id=$(runtime_id_for "$version")
-    fi
-    [[ -n "$runtime_id" ]] \
-        || { echo "no iOS $version runtime found among available runtimes" >&2; exit 1; }
-    echo ">>> iOS $version runtime id: $runtime_id"
-
-    # Idempotent create — Xcode's default set or a prior bake may already have
-    # this device on the runtime. Skip it then, so the name stays unambiguous.
-    if ! xcrun simctl list devices -j | /usr/bin/python3 -c "
-import json, sys
-devices = json.load(sys.stdin)['devices'].get('${runtime_id}', [])
-sys.exit(0 if any(d.get('name') == '${name}' for d in devices) else 1)
-" 2>/dev/null; then
-        echo ">>> creating simulator '$name' on iOS $version"
-        xcrun simctl create "$name" "$type" "$runtime_id"
-    else
-        echo ">>> simulator '$name' already exists on iOS $version, skipping create"
-    fi
-}
-
-# Xcode 27 does not download iOS 18 runtimes ("not available for download").
-# bake-macos.sh copies a signed runtime image to the guest, and this step
-# imports it. The image is a raw runtime image from a host Xcode, or an
-# `xcodebuild -exportPath` bundle with the raw image in Restore/. Xcode 27's
-# `simctl runtime add` cannot import the bundle: it tries to remove the inner
-# image from the read-only bundle volume and marks the runtime "Unusable". So
-# copy the inner image out of a bundle and import that. simctl consumes the
-# file that it imports.
-if [[ -n "${MAESTRO_IOS_RUNTIME_DMG:-}" ]]; then
-    runtime_dmg="$MAESTRO_IOS_RUNTIME_DMG"
-    mnt=$(mktemp -d /tmp/runtime-bundle.XXXX)
-    if hdiutil attach -readonly -nobrowse -noverify -mountpoint "$mnt" "$runtime_dmg" >/dev/null; then
-        inner=""
-        [[ -d "$mnt/Restore" ]] && inner=$(find "$mnt/Restore" -maxdepth 1 -name '*.dmg' | head -1)
-        if [[ -n "$inner" ]]; then
-            echo ">>> $runtime_dmg is a runtime bundle, copying out Restore/$(basename "$inner")"
-            cp "$inner" /tmp/maestro-ios-runtime-inner.dmg
-            runtime_dmg=/tmp/maestro-ios-runtime-inner.dmg
-        fi
-        hdiutil detach "$mnt" -quiet
-    fi
-    echo ">>> importing iOS $MAESTRO_IOS_RUNTIME_VERSION runtime from $runtime_dmg"
-    xcrun simctl runtime add "$runtime_dmg" || true
-    # The runtime can take a few seconds to show up after the add returns.
-    for _ in $(seq 15); do
-        [[ -n "$(runtime_id_for "$MAESTRO_IOS_RUNTIME_VERSION")" ]] && break
-        sleep 2
-    done
-    [[ -n "$(runtime_id_for "$MAESTRO_IOS_RUNTIME_VERSION")" ]] || {
-        echo "could not import iOS $MAESTRO_IOS_RUNTIME_VERSION from $runtime_dmg" >&2
-        xcrun simctl runtime list >&2 || true
-        exit 1
-    }
-    rm -f "$MAESTRO_IOS_RUNTIME_DMG" "$runtime_dmg"
-fi
-
-# Bare name: Rallista-iOS-V3 targets "iPhone 17 Pro Max" with no OS suffix.
-install_runtime_device "$IOS_RUNTIME_VERSION" "iPhone 17 Pro Max" \
-    "com.apple.CoreSimulator.SimDeviceType.iPhone-17-Pro-Max"
-install_runtime_device "$MAESTRO_IOS_RUNTIME_VERSION" \
-    "iPhone 16 (iOS ${MAESTRO_IOS_RUNTIME_VERSION})" \
-    "com.apple.CoreSimulator.SimDeviceType.iPhone-16"
-
-echo ">>> available devices:"
-xcrun simctl list devices available || true
+chmod +x /tmp/bakery
+/tmp/bakery simulators install /tmp/bakery-simulators.json
 
 # ---- Rust + just -----------------------------------------------------------
 

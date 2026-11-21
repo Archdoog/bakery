@@ -17,6 +17,26 @@ host:
     cpu: 2                       # cores left for the macOS host
     memory_gb: 8                 # GB left for the macOS host
 
+goldens:
+  macos:
+    xcodes:
+      - version: "27"
+      - version: "26.5"
+    default_xcode: "27"
+    simulators:
+      - platform: iOS
+        version: "27.0"
+        xcode: "27"
+        devices:
+          - name: iPhone 17 Pro Max
+            device_type: com.apple.CoreSimulator.SimDeviceType.iPhone-17-Pro-Max
+      - platform: iOS
+        version: "18.6"
+        xcode: "26.5"
+        devices:
+          - name: iPhone 16 (iOS 18.6)
+            device_type: com.apple.CoreSimulator.SimDeviceType.iPhone-16
+
 runners:
   # Unified macOS runner: iOS/Xcode + Android tooling in one golden. Apple's
   # EULA caps macOS guests at 2 concurrent per host, so we bake both stacks

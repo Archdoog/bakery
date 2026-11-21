@@ -31,40 +31,131 @@ Each class needs its golden built once.
 
 ```sh
 bakery build ubuntu      # ~15-20 min, ~3 GB download
-bakery build macos       # ~30-50 min, ~20 GB (iOS 27 + iOS 18.6 runtimes are ~8 GB each)
+bakery build macos       # downloads depend on the selected Xcode versions and runtimes
 ```
 
-The macOS bake copies the iOS 18.6 simulator runtime (for Maestro) from the
-host into the guest, because Xcode 27 cannot download iOS 18 runtimes. The bake
-uses the first image that it finds:
+The macOS bake reads Xcode and simulator settings from `goldens.<destination>`
+in `runners.yaml`. The destination is `macos`, or the name passed with `--as`.
+The example preserves the iOS 27.0 and iOS 18.6 devices used by existing jobs.
 
-1. `MAESTRO_IOS_RUNTIME_DMG`.
-2. `state/ios-18.6-simulator-runtime.dmg`.
-3. The runtime from the host's Xcode, if the host has Xcode with iOS 18.6.
-4. A new download. The bake starts a temporary Xcode 26 guest
-   (`RUNTIME_DONOR_SOURCE`, default `…macos-tahoe-xcode:26.5`), downloads the
-   runtime there, and saves it to `state/`. The first bake on a new host pulls
-   that image (~70 GB) and the runtime (~9 GB). Then the bake deletes the
-   guest and the image. Later bakes use the copy in `state/`.
+```yaml
+goldens:
+  macos:
+    xcodes:
+      - version: "27"
+      - version: "26.5"
+    default_xcode: "27"
+    simulators:
+      - platform: iOS
+        version: "27.0"
+        xcode: "27"
+        devices:
+          - name: iPhone 17 Pro Max
+            device_type: com.apple.CoreSimulator.SimDeviceType.iPhone-17-Pro-Max
+```
+
+Each `xcodes` entry selects one Xcode version. The bake installs each version
+at `/Applications/Xcode-<version>.app`. `default_xcode` selects the version for
+runner jobs. If omitted, the first entry is the default. Jobs can select another
+installed version with `DEVELOPER_DIR`:
+
+```yaml
+env:
+  DEVELOPER_DIR: /Applications/Xcode-26.5.app/Contents/Developer
+```
+
+The bake uses the first Xcode entry's source image as its base. By default,
+that source is `ghcr.io/cirruslabs/macos-tahoe-xcode:<version>`.
+Set an entry's `source` to use another Tart image. Set `goldens.<destination>.source`
+to select the golden's macOS base independently. An explicit `BAKE_SOURCE`
+environment variable overrides the YAML base source.
+
+For each missing Xcode version, the bake starts a temporary guest from that
+entry's source image. It copies Xcode into `state/xcode-<version>.tar` and then
+into the golden. Later bakes reuse the archive. The donor and golden run
+separately. The bake checks each app's version before it selects the default.
+
+No Apple ID sign-in is necessary. Each selected Xcode version must support the
+golden's macOS version.
+
+Quote version numbers. A selector such as `27` accepts an installed `27.x`
+release. Use a full version and a matching source tag to pin a release.
+Version selectors must not overlap. If `xcodes` is empty or omitted, the bake
+keeps the base image's Xcode installation and default selection.
+
+Each simulator entry can set `xcode` to a configured Xcode version. The bake
+uses that version for runtime installation and device creation. If omitted,
+the bake uses the default Xcode. Installed Xcode versions share simulator runtime
+files. Each Xcode must support the runtime it uses.
+
+Each entry installs one platform version. Supported platforms are `iOS`,
+`watchOS`, `tvOS`, and `visionOS`. Quote each version. Omit `devices` to install
+only the runtime.
+
+Use `simulators: []` for a golden without simulators.
+If the golden has no configuration entry, the bake uses an empty simulator list.
+The bake deletes unselected devices and runtimes inherited from the base image.
+It does this inside the golden, before runner provisioning.
+
+Devices share runtime files. Removing a runtime saves more space than removing
+an unused device. Downloads request the Apple Silicon runtime variant.
+Use `xcrun simctl list devicetypes` to find device type identifiers.
+
+To install iOS 18.6 with the configured Xcode 26.5, add another simulator entry:
+
+```yaml
+      - platform: iOS
+        version: "18.6"
+        xcode: "26.5"
+        devices:
+          - name: iPhone 16 (iOS 18.6)
+            device_type: com.apple.CoreSimulator.SimDeviceType.iPhone-16
+```
+
+To use an external runtime image, set `runtime_image` to a host image path.
+Alternatively, set `donor_source` to a compatible Tart image. This avoids
+installing another Xcode version in the golden:
+
+```yaml
+      - platform: iOS
+        version: "18.6"
+        donor_source: ghcr.io/cirruslabs/macos-tahoe-xcode:26.5
+        devices:
+          - name: iPhone 16 (iOS 18.6)
+            device_type: com.apple.CoreSimulator.SimDeviceType.iPhone-16
+```
+
+If the golden already has the runtime, the bake skips the image transfer.
+Otherwise, the bake first checks `runtime_image`, then `state/<platform>-<version>-simulator-runtime.dmg`,
+then the host's installed runtime. The cache uses lowercase platform names.
+Paths are relative to the repository root.
+
+If none exists, `donor_source` starts a temporary guest to download the image.
+The bake caches the image in `state/` and deletes the donor guest and its added
+OCI cache entries. Without `donor_source`, the golden downloads the runtime itself.
+The donor and golden run separately.
+
+Existing configurations must add `goldens.macos.simulators` before the next macOS bake.
+The bake does not use `IOS_RUNTIME_VERSION`, `MAESTRO_IOS_RUNTIME_VERSION`,
+`MAESTRO_IOS_RUNTIME_DMG`, or `RUNTIME_DONOR_SOURCE`.
 
 Add a new golden: drop `scripts/bake-<name>.sh` + `scripts/bake/<name>-install.sh`;
 `bakery build <name>` picks it up.
 
 ### Bumping a tool version (e.g. Xcode)
 
-Tool versions live in the bake scripts — Xcode comes from the Cirrus base image
-(`BAKE_SOURCE` in `scripts/bake-macos.sh`, default `…macos-tahoe-xcode:27`),
-others from `scripts/bake/<name>-install.sh` (e.g. `IOS_RUNTIME_VERSION`). Pin
-the version, re-bake, then re-clone the runners:
+Set Xcode versions, the default Xcode, and simulator targets in `runners.yaml`.
+Other tools come from `scripts/bake/<name>-install.sh`.
+Then rebuild the golden and replace its runners:
 
 ```sh
-# Xcode 27.1 (Cirrus publishes a matching tag) + its iOS runtime:
 tart delete macos
-BAKE_SOURCE=ghcr.io/cirruslabs/macos-tahoe-xcode:27.1 IOS_RUNTIME_VERSION=27.1 bakery build macos
-bakery recycle macos     # re-stamp runners from the new golden
+bakery build macos
+bakery recycle macos
 ```
 
-Edit the script default if the bump is permanent rather than a one-off.
+The macOS build requires the configuration file. `bakery build` still lists
+available bake scripts without a configuration file. Ubuntu builds do not require one.
 
 ## Up, down, status
 

@@ -11,13 +11,20 @@ use thiserror::Error;
 /// Common SSH options: no host-key prompts, short connect timeout, and force
 /// password auth so sshd doesn't count agent keys against MaxAuthTries.
 const SSH_OPTS: &[&str] = &[
-    "-o", "StrictHostKeyChecking=no",
-    "-o", "UserKnownHostsFile=/dev/null",
-    "-o", "LogLevel=ERROR",
-    "-o", "ConnectTimeout=15",
-    "-o", "PubkeyAuthentication=no",
-    "-o", "PreferredAuthentications=password",
-    "-o", "IdentitiesOnly=yes",
+    "-o",
+    "StrictHostKeyChecking=no",
+    "-o",
+    "UserKnownHostsFile=/dev/null",
+    "-o",
+    "LogLevel=ERROR",
+    "-o",
+    "ConnectTimeout=15",
+    "-o",
+    "PubkeyAuthentication=no",
+    "-o",
+    "PreferredAuthentications=password",
+    "-o",
+    "IdentitiesOnly=yes",
 ];
 
 #[derive(Debug, Error)]
