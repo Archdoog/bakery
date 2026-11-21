@@ -1,7 +1,7 @@
 #!/bin/bash
 # Installs, configures, and starts a GitHub Actions runner inside a macOS guest.
-# Run via SSH from the host. All args are required.
-# Args: ORG REGISTRATION_TOKEN NAME LABELS_CSV RUNNER_VERSION
+# Run via SSH from the host. The first five arguments are required.
+# Args: ORG REGISTRATION_TOKEN NAME LABELS_CSV RUNNER_VERSION [EPHEMERAL]
 set -euo pipefail
 
 ORG="$1"
@@ -9,6 +9,11 @@ TOKEN="$2"
 NAME="$3"
 LABELS="$4"
 VERSION="$5"
+EPHEMERAL="${6:-false}"
+set --
+if [[ "$EPHEMERAL" == "true" ]]; then
+  set -- --ephemeral
+fi
 
 RUNNER_DIR="$HOME/actions-runner"
 mkdir -p "$RUNNER_DIR"
@@ -53,18 +58,19 @@ PLIST
 sudo launchctl bootout   system /Library/LaunchDaemons/com.bakery.timesync.plist 2>/dev/null || true
 sudo launchctl bootstrap system /Library/LaunchDaemons/com.bakery.timesync.plist 2>/dev/null || true
 
-if [[ ! -x ./config.sh ]]; then
-  curl -fsSL -o runner.tar.gz \
-    "https://github.com/actions/runner/releases/download/v${VERSION}/actions-runner-osx-arm64-${VERSION}.tar.gz"
-  tar xzf runner.tar.gz
-  rm runner.tar.gz
-fi
-
 # Stop any prior listener/service so --replace can reconfigure cleanly.
 ./svc.sh stop 2>/dev/null || true
 ./svc.sh uninstall 2>/dev/null || true
 pkill -f Runner.Listener || true
 sleep 1
+
+INSTALLED_VERSION="$(./bin/Runner.Listener --version 2>/dev/null || true)"
+if [[ ! -x ./config.sh || "$INSTALLED_VERSION" != "$VERSION" ]]; then
+  curl -fsSL -o runner.tar.gz \
+    "https://github.com/actions/runner/releases/download/v${VERSION}/actions-runner-osx-arm64-${VERSION}.tar.gz"
+  tar xzf runner.tar.gz
+  rm runner.tar.gz
+fi
 
 # config.sh refuses if any .runner* or .credentials* file is present. The
 # runner auto-updater renames these on upgrade (.runner_migrated,
@@ -78,7 +84,7 @@ rm -f .runner* .credentials*
   --token  "${TOKEN}" \
   --name   "${NAME}" \
   --labels "${LABELS}" \
-  --unattended --replace
+  --unattended --replace "$@"
 
 # actions-runner runs $ACTIONS_RUNNER_HOOK_JOB_COMPLETED after every job. We
 # use it to evict the parts of the workspace that bloat fastest: GHA's own

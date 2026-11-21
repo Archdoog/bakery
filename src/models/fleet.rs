@@ -7,7 +7,7 @@ use thiserror::Error;
 
 use super::runner::RunnerGroup;
 
-pub const DEFAULT_RUNNER_VERSION: &str = "2.329.0";
+pub const DEFAULT_RUNNER_VERSION: &str = "latest";
 
 #[derive(Debug, Clone, Copy, Deserialize)]
 pub struct Reserve {

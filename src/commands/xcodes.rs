@@ -13,7 +13,7 @@ use crate::models::fleet::GoldenConfig;
 
 /// Reports configuration, filesystem, and command errors during Xcode installation.
 #[derive(Debug, Error)]
-pub enum XcodeError {
+pub(crate) enum XcodeError {
     #[error("Xcode filesystem operation failed: {0}")]
     Io(#[from] io::Error),
     #[error("Invalid Xcode JSON: {0}")]
@@ -26,7 +26,7 @@ type Result<T> = std::result::Result<T, XcodeError>;
 
 /// Defines internal Xcode operations for the bake scripts.
 #[derive(Debug, Subcommand)]
-pub enum Action {
+pub(crate) enum Action {
     /// Write Xcode versions and source images from a golden manifest.
     Fields { manifest: PathBuf },
     /// Check whether the requested Xcode version exists in the guest.
@@ -105,7 +105,7 @@ fn canonical_app(applications: &Path, version: &str) -> PathBuf {
 ///
 /// # Errors
 /// Return an error if configuration is invalid or a filesystem operation or command fails.
-pub fn run(action: Action) -> Result<u8> {
+pub(crate) fn run(action: Action) -> Result<u8> {
     let applications = Path::new("/Applications");
     match action {
         Action::Fields { manifest } => {

@@ -16,7 +16,7 @@ use crate::models::fleet::{SimulatorConfig, SimulatorPlatform};
 
 /// Reports simulator data, filesystem, and command errors during a bake.
 #[derive(Debug, Error)]
-pub enum SimulatorError {
+pub(crate) enum SimulatorError {
     #[error("Simulator filesystem operation failed: {0}")]
     Io(#[from] io::Error),
     #[error("Invalid simulator JSON: {0}")]
@@ -38,7 +38,7 @@ type Result<T> = std::result::Result<T, SimulatorError>;
 
 /// Defines internal simulator operations for the bake scripts.
 #[derive(Debug, Subcommand)]
-pub enum Action {
+pub(crate) enum Action {
     /// Write manifest fields as records separated by null bytes.
     Fields { manifest: PathBuf },
     /// Check stdin for an available runtime with the given platform and version.
@@ -117,7 +117,7 @@ fn matches(runtime: &Runtime, platform: &str, version: &str) -> bool {
 ///
 /// # Errors
 /// Return an error if simulator data is invalid or a filesystem operation or command fails.
-pub fn run(action: Action) -> Result<u8> {
+pub(crate) fn run(action: Action) -> Result<u8> {
     match action {
         Action::Fields { manifest } => {
             let specs: Vec<SimulatorConfig> = serde_json::from_slice(&fs::read(manifest)?)?;

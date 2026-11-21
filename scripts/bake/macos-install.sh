@@ -44,6 +44,10 @@ command -v xcodebuild >/dev/null \
 command -v brew >/dev/null \
   || { echo "brew missing — expected on a Cirrus macos-tahoe-xcode golden" >&2; exit 1; }
 
+# Prebuilt Ruby extensions use absolute Homebrew library paths.
+echo ">>> Ruby runtime libraries"
+brew install --quiet openssl@3 openssl@4 libyaml gmp
+
 # ---- sshd: disable PerSourcePenalties (cold-clone provisioning races) -------
 # OpenSSH 9.8+ (shipped in this macOS) penalizes a source IP after failed auth
 # attempts. A freshly stamped clone accepts SSH connections before

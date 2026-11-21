@@ -88,14 +88,14 @@ fn listing_and_linux_builds_do_not_require_configuration() {
 }
 
 #[test]
-fn xcode_configuration_sets_base_image_and_reaches_the_bake() {
+fn ephemeral_fleet_passes_xcode_configuration_to_bake() {
     let workspace = Workspace::new();
     fs::write(
         workspace.0.join("scripts/bake-macos.sh"),
         "#!/bin/bash\nprintf '%s\\n%s\\n' \"$BAKE_SOURCE\" \"$BAKERY_APPLE_JSON\" > received.txt\n",
     )
     .unwrap();
-    fs::write(workspace.0.join("runners.yaml"), "github: {org: test}\nrunners: []\ngoldens:\n  macos:\n    xcodes: [{version: '27', source: 'custom-xcode-image'}, {version: '26.5'}]\n    default_xcode: '26.5'\n").unwrap();
+    fs::write(workspace.0.join("runners.yaml"), "github: {org: test}\nrunners:\n  - name: macos\n    kind: macos\n    image: macos\n    count: 1\n    ephemeral: true\n    resources: {cpu: 2, memory_gb: 4}\n    labels: [xcode]\ngoldens:\n  macos:\n    xcodes: [{version: '27', source: 'custom-xcode-image'}, {version: '26.5'}]\n    default_xcode: '26.5'\n").unwrap();
     assert!(workspace.run(&["build", "macos"]).status.success());
     let received = fs::read_to_string(workspace.0.join("received.txt")).unwrap();
     let (source, manifest) = received.split_once('\n').unwrap();

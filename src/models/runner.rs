@@ -41,6 +41,8 @@ pub struct RunnerGroup {
     pub count: u32,
     pub resources: Resources,
     pub labels: Vec<String>,
+    #[serde(default)]
+    pub ephemeral: bool,
 }
 
 /// Expand a group into its per-runner names: `ubuntu` with count=2 → `ubuntu-1`, `ubuntu-2`.

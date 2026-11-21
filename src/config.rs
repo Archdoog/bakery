@@ -252,4 +252,21 @@ mod tests {
             assert!(validate(&cfg).is_err(), "{golden}");
         }
     }
+
+    #[test]
+    fn yaml_example_enables_ephemeral_and_omission_defaults_to_persistent() {
+        let yaml = include_str!("../runners.yaml.example");
+        let cfg: FleetConfig = serde_yaml_ng::from_str(yaml).unwrap();
+        assert!(cfg.runners.iter().all(|g| g.ephemeral));
+        assert_eq!(cfg.runner_version, "latest");
+        let pinned: FleetConfig =
+            serde_yaml_ng::from_str(&format!("{yaml}\nrunner_version: 2.337.0\n")).unwrap();
+        assert_eq!(pinned.runner_version, "2.337.0");
+        let cfg: FleetConfig =
+            serde_yaml_ng::from_str(&yaml.replace("ephemeral: true", "ephemeral: false")).unwrap();
+        assert!(cfg.runners.iter().all(|g| !g.ephemeral));
+        let cfg: FleetConfig =
+            serde_yaml_ng::from_str(&yaml.replace("    ephemeral: true\n", "")).unwrap();
+        assert!(cfg.runners.iter().all(|g| !g.ephemeral));
+    }
 }
