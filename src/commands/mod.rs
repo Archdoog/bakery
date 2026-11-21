@@ -5,11 +5,10 @@ mod clean;
 mod down;
 mod plan;
 mod recycle;
-pub(crate) mod simulators;
 mod status;
+mod tools;
 mod up;
 mod watch;
-pub(crate) mod xcodes;
 
 use crate::{
     cli::{Cli, Cmd},
@@ -34,8 +33,12 @@ pub(crate) fn run(cli: Cli) -> Result<u8> {
         None
     };
     match cli.cmd {
-        Cmd::Xcodes { action } => xcodes::run(action).map_err(Into::into),
-        Cmd::Simulators { action } => simulators::run(action).map_err(Into::into),
+        Cmd::PrepareTools {
+            host,
+            manifest,
+            root,
+        } => tools::prepare(&host, &manifest, &root).map(|_| 0),
+        Cmd::InstallTools { manifest } => tools::install(&manifest).map(|_| 0),
         Cmd::Build { image, as_name } => {
             build::run(&cli.config, image.as_deref(), as_name.as_deref())
         }

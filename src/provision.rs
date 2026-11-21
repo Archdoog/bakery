@@ -59,7 +59,7 @@ pub type Result<T> = std::result::Result<T, ProvisionError>;
 
 /// Returns an `ssh` or `scp` command, named by `program`, that logs in with
 /// `password`. The working directory must be the repo root.
-fn guest_command(program: &str, password: &str) -> Command {
+pub(crate) fn guest_command(program: &str, password: &str) -> Command {
     // On a macOS 27 host, sshpass fails about 1 login in 4: ssh logs "can't open
     // /dev/tty", sends empty passwords, and sshd answers "Permission denied".
     let askpass = std::env::current_dir()

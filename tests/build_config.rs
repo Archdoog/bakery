@@ -18,7 +18,7 @@ impl Workspace {
         fs::create_dir_all(root.join("scripts")).unwrap();
         for image in ["macos", "ubuntu"] {
             let script = root.join(format!("scripts/bake-{image}.sh"));
-            fs::write(&script, "#!/bin/bash\nprintf '%s\\n%s\\n' \"$1\" \"${BAKERY_SIMULATORS_JSON:-}\" > received.txt\n").unwrap();
+            fs::write(&script, "#!/bin/bash\nprintf '%s\\n%s\\n' \"$1\" \"${BAKERY_TOOLS_JSON:-}\" > received.txt\n").unwrap();
             fs::set_permissions(script, fs::Permissions::from_mode(0o755)).unwrap();
         }
         Self(root)
@@ -41,7 +41,7 @@ impl Workspace {
     fn run(&self, args: &[&str]) -> Output {
         Command::new(env!("CARGO_BIN_EXE_bakery"))
             .current_dir(&self.0)
-            .env_remove("BAKERY_SIMULATORS_JSON")
+            .env_remove("BAKERY_TOOLS_JSON")
             .env_remove("BAKE_SOURCE")
             .args(args)
             .output()
@@ -58,15 +58,14 @@ impl Drop for Workspace {
 #[test]
 fn custom_config_and_destination_select_the_matching_golden() {
     let workspace = Workspace::new();
-    fs::write(workspace.0.join("custom.yaml"), "github: {org: test}\nrunners: []\ngoldens:\n  macos:\n    simulators: []\n  mobile:\n    simulators:\n      - {platform: iOS, version: '18.6'}\n").unwrap();
+    fs::write(workspace.0.join("custom.yaml"), "github: {org: test}\nrunners: []\ngoldens:\n  macos:\n    simulators: []\n  mobile:\n    simulators:\n      - {version: '18.6'}\n").unwrap();
     let result = workspace.run(&["-c", "custom.yaml", "build", "macos", "--as", "mobile"]);
     assert!(result.status.success(), "{:?}", result);
     let received = fs::read_to_string(workspace.0.join("received.txt")).unwrap();
     let (destination, manifest) = received.split_once('\n').unwrap();
     assert_eq!(destination, "mobile");
     let manifest: serde_json::Value = serde_json::from_str(manifest).unwrap();
-    assert_eq!(manifest[0]["platform"], "iOS");
-    assert_eq!(manifest[0]["version"], "18.6");
+    assert_eq!(manifest["simulators"][0]["version"], "18.6");
 }
 
 #[test]
@@ -77,19 +76,28 @@ fn omitted_golden_passes_an_empty_selection() {
         "github: {org: test}\nrunners: []\n",
     )
     .unwrap();
-    assert!(workspace.run(&["build", "macos"]).status.success());
-    assert_eq!(
-        fs::read_to_string(workspace.0.join("received.txt")).unwrap(),
-        "macos\n[]\n"
-    );
+    let output = workspace.run(&["build", "macos"]);
+    assert!(output.status.success());
+    let warnings = String::from_utf8_lossy(&output.stderr);
+    assert!(warnings.contains("no simulators or simulator OS targets"));
+    assert!(warnings.contains("no Android emulators"));
+    let received = fs::read_to_string(workspace.0.join("received.txt")).unwrap();
+    let (destination, manifest) = received.split_once('\n').unwrap();
+    assert_eq!(destination, "macos");
+    let manifest: serde_json::Value = serde_json::from_str(manifest).unwrap();
+    for field in ["xcodes", "simulators", "android_packages"] {
+        assert!(manifest[field].as_array().unwrap().is_empty());
+    }
 }
 
 #[test]
-fn macos_requires_valid_configuration_before_running_the_script() {
+fn invalid_configuration_stops_before_running_the_script() {
     let workspace = Workspace::new();
-    assert!(!workspace.run(&["build", "macos"]).status.success());
-    assert!(!workspace.0.join("received.txt").exists());
-    fs::write(workspace.0.join("runners.yaml"), "github: {org: test}\nrunners: []\ngoldens: {macos: {simulators: [{platform: iOS, version: 'bad'}]}}\n").unwrap();
+    fs::write(
+        workspace.0.join("runners.yaml"),
+        "github: {org: test}\nrunners: []\ngoldens: {macos: {simulators: [{version: 'bad'}]}}\n",
+    )
+    .unwrap();
     assert!(!workspace.run(&["build", "macos"]).status.success());
     assert!(!workspace.0.join("received.txt").exists());
 }
@@ -99,32 +107,14 @@ fn listing_and_linux_builds_do_not_require_configuration() {
     let workspace = Workspace::new();
     assert!(workspace.run(&["build"]).status.success());
     assert!(workspace.run(&["build", "ubuntu"]).status.success());
-}
-
-#[test]
-fn ephemeral_fleet_passes_xcode_configuration_to_bake() {
-    let workspace = Workspace::new();
-    fs::write(
-        workspace.0.join("scripts/bake-macos.sh"),
-        "#!/bin/bash\nprintf '%s\\n%s\\n' \"$BAKE_SOURCE\" \"$BAKERY_APPLE_JSON\" > received.txt\n",
-    )
-    .unwrap();
-    fs::write(workspace.0.join("runners.yaml"), "github: {org: test}\nrunners:\n  - name: macos\n    kind: macos\n    image: macos\n    count: 1\n    ephemeral: true\n    resources: {cpu: 2, memory_gb: 4}\n    labels: [xcode]\ngoldens:\n  macos:\n    xcodes: [{version: '27', source: 'custom-xcode-image'}, {version: '26.5'}]\n    default_xcode: '26.5'\n").unwrap();
     assert!(workspace.run(&["build", "macos"]).status.success());
-    let received = fs::read_to_string(workspace.0.join("received.txt")).unwrap();
-    let (source, manifest) = received.split_once('\n').unwrap();
-    assert_eq!(source, "ghcr.io/cirruslabs/macos-golden-gate-xcode:latest");
-    let manifest: serde_json::Value = serde_json::from_str(manifest).unwrap();
-    assert_eq!(manifest["default_xcode"], "26.5");
-    assert_eq!(manifest["xcodes"][1]["version"], "26.5");
-    assert_eq!(manifest["xcodes"][0]["source"], "custom-xcode-image");
 }
 
 #[test]
 fn root_images_apply_to_both_bakes() {
     let workspace = Workspace::new();
     workspace.record_root();
-    fs::write(workspace.0.join("runners.yaml"), "github: {org: test}\nrunners: []\nroot_images: {macos: 'ghcr.io/example/macos', ubuntu: 'registry.example:5000/ubuntu'}\ngoldens: {macos: {xcodes: [{version: '27.2'}]}}\n").unwrap();
+    fs::write(workspace.0.join("runners.yaml"), "github: {org: test}\nrunners: []\nroot_images: {macos: 'ghcr.io/example/macos', ubuntu: 'registry.example:5000/ubuntu'}\ngoldens: {macos: {xcodes: ['27.2']}}\n").unwrap();
     assert!(workspace.run(&["build", "macos"]).status.success());
     assert_eq!(workspace.root(), "ghcr.io/example/macos:latest");
     assert!(workspace.run(&["build", "ubuntu"]).status.success());

@@ -74,10 +74,6 @@ host:
     cpu: 2
     memory_gb: 8
 
-root_images:
-  macos: ghcr.io/cirruslabs/macos-golden-gate-xcode:latest
-  ubuntu: ghcr.io/cirruslabs/ubuntu:latest
-
 runners:
   - name: macos
     kind: macos
@@ -119,7 +115,7 @@ runners:
 | `runner_version` | Optional top-level Actions runner version. Defaults to `latest`, resolved from GitHub for each provisioning operation. Set a release number to pin it. |
 
 See [Golden images](docs/golden-images.md) for root image settings and overrides.
-The macOS golden includes Xcode and Android tools.
+The macOS golden defaults to the latest Xcode and stable Android SDK, without simulators or emulators.
 Set Xcode versions and simulator targets under `goldens.<image>` in the fleet YAML.
 See [Apple toolchains](docs/apple-toolchains.md) for the schema, sources, and rebuild steps.
 Ephemeral runners inherit these tools from the golden when `watch` creates each fresh VM.

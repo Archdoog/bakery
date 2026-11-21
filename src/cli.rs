@@ -22,15 +22,13 @@ pub(crate) struct Cli {
 #[derive(Subcommand, Debug)]
 pub(crate) enum Cmd {
     #[command(hide = true)]
-    Xcodes {
-        #[command(subcommand)]
-        action: crate::commands::xcodes::Action,
+    PrepareTools {
+        host: String,
+        manifest: PathBuf,
+        root: String,
     },
     #[command(hide = true)]
-    Simulators {
-        #[command(subcommand)]
-        action: crate::commands::simulators::Action,
-    },
+    InstallTools { manifest: PathBuf },
     /// Validate config and check host resource fit.
     Plan,
     /// Clone, start, and register runners.

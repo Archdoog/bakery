@@ -1,6 +1,6 @@
 //! Build command.
 
-use crate::paths::scripts_dir;
+use crate::{models::fleet::default_root, paths::scripts_dir};
 use anyhow::{Context, Result};
 use std::{fs, path::Path, process::Command};
 
@@ -51,13 +51,16 @@ pub(super) fn run(config_path: &Path, image: Option<&str>, as_name: Option<&str>
     );
     let mut command = Command::new(&script);
     command.arg(dest);
-    let cfg = if image == "macos" || config_path.exists() {
+    let cfg = if config_path.exists() || config_path != Path::new("runners.yaml") {
         Some(super::load_cfg(config_path)?)
     } else {
         None
     };
     if std::env::var_os("BAKE_SOURCE").is_none() {
-        let source = cfg.as_ref().and_then(|cfg| cfg.root_image(image, dest));
+        let source = cfg
+            .as_ref()
+            .and_then(|cfg| cfg.root_image(image, dest))
+            .or_else(|| default_root(image).map(str::to_owned));
         if let Some(source) = source {
             command.env("BAKE_SOURCE", source);
         }
@@ -68,12 +71,18 @@ pub(super) fn run(config_path: &Path, image: Option<&str>, as_name: Option<&str>
             .and_then(|cfg| cfg.goldens.get(dest))
             .cloned()
             .unwrap_or_default();
-        command.env("BAKERY_APPLE_JSON", serde_json::to_string(&golden)?);
+        if golden.simulators.is_empty() {
+            eprintln!("Warning: no simulators or simulator OS targets selected. CI scripts can install them later.");
+        }
+        if !golden
+            .android_packages
+            .iter()
+            .any(|package| package == "emulator" || package.starts_with("system-images;"))
+        {
+            eprintln!("Warning: no Android emulators selected. CI scripts can install them later.");
+        }
+        command.env("BAKERY_TOOLS_JSON", serde_json::to_string(&golden)?);
         command.env("BAKERY_BIN", std::env::current_exe()?);
-        command.env(
-            "BAKERY_SIMULATORS_JSON",
-            serde_json::to_string(&golden.simulators)?,
-        );
     }
     let status = command
         .status()

@@ -38,10 +38,11 @@ The selection order is:
 3. The bake script's entry in `root_images`.
 4. The built-in root for `macos` or `ubuntu`.
 
-Ubuntu builds read the configuration file when it exists. Without one, they use
-the default root. macOS builds require the configuration file for tool selection.
+Both builds read the configuration file when it exists. Without one, they use
+the default roots and tools.
 `bakery build` still lists scripts without a configuration file.
 
 Stop the watcher before rebuilding a golden. Wait until its runners are idle.
-After rebuilding, recycle the affected runners and restart the watcher.
+Stop the runners with `bakery down` to free the macOS guest slots.
+After rebuilding, start the runners and restart the watcher.
 Ephemeral replacements inherit the root and tools from the rebuilt golden.

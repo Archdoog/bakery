@@ -80,11 +80,7 @@ impl FleetConfig {
             .get(destination)
             .and_then(|golden| golden.source.as_deref())
             .or_else(|| self.root_images.get(image).map(String::as_str))
-            .or(match image {
-                "macos" => Some("ghcr.io/cirruslabs/macos-golden-gate-xcode:latest"),
-                "ubuntu" => Some("ghcr.io/cirruslabs/ubuntu:latest"),
-                _ => None,
-            })
+            .or(default_root(image))
             .map(|source| {
                 if source.contains('/')
                     && !source.contains('@')
@@ -111,71 +107,34 @@ impl FleetConfig {
     }
 }
 
-/// Defines a golden image source and its Apple development tools.
+/// Return the latest published root for a built-in bake image.
+pub(crate) fn default_root(image: &str) -> Option<&'static str> {
+    match image {
+        "macos" => Some("ghcr.io/cirruslabs/macos-golden-gate-xcode:latest"),
+        "ubuntu" => Some("ghcr.io/cirruslabs/ubuntu:latest"),
+        _ => None,
+    }
+}
+
+/// Defines a golden image source and optional tool overrides.
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct GoldenConfig {
     #[serde(default)]
     pub source: Option<String>,
     #[serde(default)]
-    pub xcodes: Vec<XcodeConfig>,
-    #[serde(default)]
-    pub default_xcode: Option<String>,
+    pub xcodes: Vec<String>,
     #[serde(default)]
     pub simulators: Vec<SimulatorConfig>,
+    #[serde(default)]
+    pub android_packages: Vec<String>,
 }
 
-/// Selects a platform runtime, its source image, and its simulator devices.
+/// Selects an iOS runtime and device names from the simulator catalog.
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct SimulatorConfig {
-    #[serde(default)]
-    pub xcode: Option<String>,
-    pub platform: SimulatorPlatform,
     pub version: String,
     #[serde(default)]
-    pub devices: Vec<SimulatorDevice>,
-    #[serde(default)]
-    pub runtime_image: Option<String>,
-    #[serde(default)]
-    pub donor_source: Option<String>,
-}
-
-/// Names a platform that Xcode can download for a simulator.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Deserialize, Serialize)]
-pub enum SimulatorPlatform {
-    #[serde(rename = "iOS")]
-    Ios,
-    #[serde(rename = "watchOS")]
-    Watchos,
-    #[serde(rename = "tvOS")]
-    Tvos,
-    #[serde(rename = "visionOS")]
-    Visionos,
-}
-
-/// Selects a simulator device name and a CoreSimulator device type identifier.
-#[derive(Debug, Clone, Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
-pub struct SimulatorDevice {
-    pub name: String,
-    pub device_type: String,
-}
-
-/// Selects an Xcode version and an optional Tart image that contains it.
-#[derive(Debug, Clone, Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
-pub struct XcodeConfig {
-    pub version: String,
-    #[serde(default)]
-    pub source: Option<String>,
-}
-
-impl XcodeConfig {
-    /// Return the Tart source image for this Xcode version.
-    pub fn source_image(&self) -> String {
-        self.source
-            .clone()
-            .unwrap_or_else(|| format!("ghcr.io/cirruslabs/macos-tahoe-xcode:{}", self.version))
-    }
+    pub devices: Vec<String>,
 }
