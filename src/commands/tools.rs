@@ -343,13 +343,14 @@ fn install_simulators(specs: &[SimulatorConfig], run: &mut Run<'_>) -> Result<()
         serde_json::from_str(&simctl(run, &["runtime", "list", "-j"])?)?;
     simctl(run, &["shutdown", "all"])?;
     simctl(run, &["delete", "all"])?;
+    // Device creation can fail after runtime removal despite the catalog reporting availability.
+    for (name, device, runtime) in devices {
+        simctl(run, &["create", name, &device, &runtime])?;
+    }
     for (id, image) in images {
         if !builds.contains(&image.build) {
             simctl(run, &["runtime", "delete", &id])?;
         }
-    }
-    for (name, device, runtime) in devices {
-        simctl(run, &["create", name, &device, &runtime])?;
     }
     Ok(())
 }
@@ -398,6 +399,10 @@ fn install_android(golden: &GoldenConfig, home: &str, run: &mut Run<'_>) -> Resu
         .into_iter()
         .chain(packages.iter().map(String::as_str))
         .collect();
+    let command_tools = Path::new(&sdk).join("cmdline-tools");
+    if command_tools.exists() {
+        fs::remove_dir_all(command_tools)?;
+    }
     run("sdkmanager", &args)?;
     let installed = run("sdkmanager", &[&root, "--list_installed"])?;
     for package in installed
@@ -434,6 +439,7 @@ fn install_android(golden: &GoldenConfig, home: &str, run: &mut Run<'_>) -> Resu
 }
 
 /// Install the `manifest` tools inside a disposable macOS golden.
+/// Homebrew must supply `sdkmanager` outside the Android SDK directory.
 ///
 /// # Errors
 /// Return an error if configuration, catalogs, or tool installation fails.
@@ -506,14 +512,21 @@ mod tests {
     }
 
     #[test]
-    fn simulator_names_resolve_from_runtime_and_keep_only_selected_builds() {
+    fn simulator_devices_initialize_before_unselected_images_are_removed() {
         let spec = SimulatorConfig {
             version: "27.2".into(),
             devices: vec!["iPhone 17".into()],
         };
         let mut calls = Vec::new();
+        let mut removed = false;
         install_simulators(&[spec], &mut |_, args| {
             calls.push(args.join(" "));
+            if args.get(1) == Some(&"create") && removed {
+                bail!("The iOS 27.2 simulator runtime is not available after image removal");
+            }
+            if args == ["simctl", "runtime", "delete", "remove"] {
+                removed = true;
+            }
             Ok(match args {
                 ["simctl", "list", "runtimes", "-j"] => runtime_catalog(),
                 ["simctl", "runtime", "list", "-j"] => {
@@ -525,10 +538,17 @@ mod tests {
         .unwrap();
         assert!(calls.contains(&"simctl runtime delete remove".to_owned()));
         assert!(!calls.contains(&"simctl runtime delete keep".to_owned()));
-        assert_eq!(
-            calls.last().unwrap(),
-            "simctl create iPhone 17 phone com.apple.CoreSimulator.SimRuntime.iOS-27-2"
-        );
+        let create = calls
+            .iter()
+            .position(|call| {
+                call == "simctl create iPhone 17 phone com.apple.CoreSimulator.SimRuntime.iOS-27-2"
+            })
+            .unwrap();
+        let remove = calls
+            .iter()
+            .position(|call| call == "simctl runtime delete remove")
+            .unwrap();
+        assert!(create < remove);
     }
 
     #[test]
@@ -570,6 +590,9 @@ mod tests {
             let avds = temp.path().join(".android/avd");
             fs::create_dir_all(&avds).unwrap();
             fs::write(avds.join("old.avd"), "").unwrap();
+            let command_tools = temp.path().join("Library/Android/sdk/cmdline-tools");
+            fs::create_dir_all(command_tools.join("latest")).unwrap();
+            fs::create_dir(command_tools.join("latest-2")).unwrap();
             let golden = GoldenConfig {
                 android_packages: extras.clone(),
                 ..GoldenConfig::default()
@@ -577,6 +600,10 @@ mod tests {
             let mut calls = Vec::new();
             let environment = install_android(&golden, temp.path().to_str().unwrap(), &mut |_, args| {
                 calls.push(args.iter().map(|arg| arg.to_string()).collect::<Vec<_>>());
+                if args.contains(&"--install") {
+                    assert!(!command_tools.exists(), "Inherited tools prevent a canonical latest installation");
+                    fs::create_dir_all(command_tools.join("latest")).unwrap();
+                }
                 Ok(if args.contains(&"--list") {
                     "platforms;android-37 | SDK\nbuild-tools;37.0.0 | tools\nndk;29.1.2 | NDK".into()
                 } else if args.contains(&"--list_installed") {
@@ -599,6 +626,8 @@ mod tests {
             assert_eq!(removed.len(), if extras.is_empty() { 3 } else { 1 });
             assert_eq!(avds.exists(), !extras.is_empty());
             assert!(environment.contains("/ndk/29.1.2"));
+            assert!(command_tools.join("latest").is_dir());
+            assert!(!command_tools.join("latest-2").exists());
         }
     }
 
