@@ -6,11 +6,12 @@ way are the easiest to merge.
 
 ## Dev setup
 
-Prereqs: Apple Silicon, macOS 13+, [Tart](https://tart.run), `sshpass`, and a
+Prereqs: Apple Silicon, macOS 13+, [Tart 2.42+](https://tart.run), `sshpass`, and a
 stable Rust toolchain.
 
 ```sh
-brew install cirruslabs/cli/tart sshpass rustup
+brew tap openai/tools
+brew install openai/tools/softnet openai/tools/tart sshpass rustup
 rustup-init -y
 
 git clone git@github.com:Archdoog/bakery.git && cd bakery

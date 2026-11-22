@@ -25,7 +25,7 @@ readonly INSTALL_SCRIPT="$HERE/bake/ubuntu-install.sh"
 command -v sshpass >/dev/null \
   || { echo "sshpass not found — brew install sshpass" >&2; exit 1; }
 command -v tart >/dev/null \
-  || { echo "tart not found — brew install cirruslabs/cli/tart" >&2; exit 1; }
+  || { echo "tart not found. Install openai/tools/tart with Homebrew." >&2; exit 1; }
 [[ -f "$INSTALL_SCRIPT" ]] \
   || { echo "missing $INSTALL_SCRIPT" >&2; exit 1; }
 

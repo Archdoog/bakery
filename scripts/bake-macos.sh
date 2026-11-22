@@ -17,7 +17,7 @@ readonly INSTALL_SCRIPT="$HERE/bake/macos-install.sh"
 : "${BAKERY_BIN:?Run bakery build macos}"
 : "${BAKERY_TOOLS_JSON:?Run bakery build macos}"
 command -v tart >/dev/null \
-  || { echo "tart not found — brew install cirruslabs/cli/tart" >&2; exit 1; }
+  || { echo "tart not found. Install openai/tools/tart with Homebrew." >&2; exit 1; }
 [[ -f "$INSTALL_SCRIPT" ]] \
   || { echo "missing $INSTALL_SCRIPT" >&2; exit 1; }
 

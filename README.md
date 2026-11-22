@@ -6,15 +6,25 @@ Build Tart golden images and run GitHub Actions runner VMs on one Apple Silicon 
 
 Requires macOS 13+ and a GitHub PAT with `admin:org` scope.
 Run commands from the repository root.
+For the default ASIF macOS image, use Tart 2.42 or later.
 
 ```sh
-brew install cirruslabs/cli/tart sshpass rustup
+brew tap openai/tools
+brew install openai/tools/softnet openai/tools/tart sshpass rustup
 rustup-init -y
 
 git clone git@github.com:Archdoog/bakery.git && cd bakery
 cargo install --path .                   # Install to ~/.cargo/bin/bakery.
 cp runners.yaml.example runners.yaml     # Set github.org and per-group resources.
 export GH_PAT=ghp_...                    # Or set token_env in runners.yaml.
+```
+
+If Tart came from `cirruslabs/cli`, stop the watcher and runners before migrating the installation:
+
+```sh
+brew uninstall --ignore-dependencies tart softnet
+brew tap openai/tools
+brew install openai/tools/softnet openai/tools/tart
 ```
 
 Edit `runners.yaml` for your organization and host resources.
