@@ -6,11 +6,12 @@ way are the easiest to merge.
 
 ## Dev setup
 
-Prereqs: Apple Silicon, macOS 13+, [Tart](https://tart.run), `sshpass`, and a
+Prereqs: Apple Silicon, macOS 13+, [Tart 2.42+](https://tart.run), `sshpass`, and a
 stable Rust toolchain.
 
 ```sh
-brew install cirruslabs/cli/tart sshpass rustup
+brew tap openai/tools
+brew install openai/tools/softnet openai/tools/tart sshpass rustup
 rustup-init -y
 
 git clone git@github.com:Archdoog/bakery.git && cd bakery
@@ -24,15 +25,15 @@ For real end-to-end testing you'll need a GitHub org and a PAT with
 ## Tests
 
 ```sh
+cargo test
 cargo check
 cargo clippy -- -D warnings
 cargo fmt -- --check
 ```
 
-There aren't unit tests checked in yet — the meaningful surface is host
-detection, fleet planning, and the bake/provision SSH dance, all of which are
-better tested end-to-end on a real host. PRs that add focused tests for pure
-logic (e.g. `host::check_fit`, label/group filtering) are very welcome.
+The tests check YAML validation, build configuration, and simulator installation
+with mocked commands. They do not start VMs or change installed simulators.
+A full bake still requires Tart and a macOS guest.
 
 ## Adding a new golden class
 
@@ -43,6 +44,7 @@ teach `bakery` about a new class, drop two scripts:
    image, boots it, runs the installer over SSH, shuts it down. Use
    `scripts/bake-ubuntu.sh` as a template; the contract is that it accepts an
    optional first argument for the destination VM name and exits 0 on success.
+   Bake scripts must read `BAKE_SOURCE` for the selected root image.
 2. `scripts/bake/<name>-install.sh` — runs *inside* the VM during bake.
    Installs whatever toolchain the runner class needs. Should be idempotent;
    `bakery build <name>` re-runs the whole pipeline on each invocation.

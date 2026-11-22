@@ -21,6 +21,14 @@ pub(crate) struct Cli {
 /// Available fleet commands.
 #[derive(Subcommand, Debug)]
 pub(crate) enum Cmd {
+    #[command(hide = true)]
+    PrepareTools {
+        host: String,
+        manifest: PathBuf,
+        root: String,
+    },
+    #[command(hide = true)]
+    InstallTools { manifest: PathBuf },
     /// Validate config and check host resource fit.
     Plan,
     /// Clone, start, and register runners.

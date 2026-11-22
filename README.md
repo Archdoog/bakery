@@ -6,15 +6,25 @@ Build Tart golden images and run GitHub Actions runner VMs on one Apple Silicon 
 
 Requires macOS 13+ and a GitHub PAT with `admin:org` scope.
 Run commands from the repository root.
+For the default ASIF macOS image, use Tart 2.42 or later.
 
 ```sh
-brew install cirruslabs/cli/tart sshpass rustup
+brew tap openai/tools
+brew install openai/tools/softnet openai/tools/tart sshpass rustup
 rustup-init -y
 
 git clone git@github.com:Archdoog/bakery.git && cd bakery
 cargo install --path .                   # Install to ~/.cargo/bin/bakery.
 cp runners.yaml.example runners.yaml     # Set github.org and per-group resources.
 export GH_PAT=ghp_...                    # Or set token_env in runners.yaml.
+```
+
+If Tart came from `cirruslabs/cli`, stop the watcher and runners before migrating the installation:
+
+```sh
+brew uninstall --ignore-dependencies tart softnet
+brew tap openai/tools
+brew install openai/tools/softnet openai/tools/tart
 ```
 
 Edit `runners.yaml` for your organization and host resources.
@@ -101,6 +111,7 @@ runners:
 | Setting | Meaning |
 | --- | --- |
 | `github.org` | Organization that owns the runners. |
+| `root_images` | Shared root image for each bake script. Remote references without a tag use `latest`. |
 | `github.token_env` | Environment variable with the PAT. Defaults to `GH_PAT`. |
 | `host.reserve` | CPU cores and memory for the host. Defaults to 4 cores and 8 GB. |
 | `runners[].name` | Group name. Bakery names its VMs `<name>-1`, `<name>-2`, and so on. |
@@ -113,6 +124,9 @@ runners:
 | `labels` | Labels for workflow `runs-on` selection, such as `[self-hosted, macos, arm64, xcode]`. |
 | `runner_version` | Optional top-level Actions runner version. Defaults to `latest`, resolved from GitHub for each provisioning operation. Set a release number to pin it. |
 
-The macOS golden includes Xcode and Android tools.
-Bake options, including simulator runtime sources, appear in `scripts/bake-macos.sh`.
+See [Golden images](docs/golden-images.md) for root image settings and overrides.
+The macOS golden defaults to the latest Xcode and stable Android SDK, without simulators or emulators.
+Set Xcode versions and simulator targets under `goldens.<image>` in the fleet YAML.
+See [Apple toolchains](docs/apple-toolchains.md) for the schema, sources, and rebuild steps.
+Ephemeral runners inherit these tools from the golden when `watch` creates each fresh VM.
 See [CONTRIBUTING.md](CONTRIBUTING.md) for development and additional golden images.

@@ -6,6 +6,7 @@ mod down;
 mod plan;
 mod recycle;
 mod status;
+mod tools;
 mod up;
 mod watch;
 
@@ -32,7 +33,15 @@ pub(crate) fn run(cli: Cli) -> Result<u8> {
         None
     };
     match cli.cmd {
-        Cmd::Build { image, as_name } => build::run(image.as_deref(), as_name.as_deref()),
+        Cmd::PrepareTools {
+            host,
+            manifest,
+            root,
+        } => tools::prepare(&host, &manifest, &root).map(|_| 0),
+        Cmd::InstallTools { manifest } => tools::install(&manifest).map(|_| 0),
+        Cmd::Build { image, as_name } => {
+            build::run(&cli.config, image.as_deref(), as_name.as_deref())
+        }
         Cmd::Plan => load_cfg(&cli.config).and_then(|c| plan::run(&c)),
         Cmd::Up { names, force } => {
             load_cfg(&cli.config).and_then(|c| up::run(&c, names_filter(&names), force))

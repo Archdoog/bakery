@@ -1,7 +1,6 @@
 #!/bin/bash
 # Bake a Linux golden VM: Temurin 21, Node 24 LTS + corepack, uv, rustup.
-# Clones ghcr.io/cirruslabs/ubuntu:latest, provisions over SSH, and leaves a
-# stopped VM named by the first argument (default: "ubuntu").
+# BAKE_SOURCE selects the root image. The first argument names the golden (default: "ubuntu").
 #
 # Usage:
 #   scripts/bake-ubuntu.sh               # -> local VM "ubuntu"
@@ -14,7 +13,7 @@
 set -euo pipefail
 
 readonly HERE="$(cd "$(dirname "$0")" && pwd)"
-readonly SOURCE_IMAGE="ghcr.io/cirruslabs/ubuntu:latest"
+readonly SOURCE_IMAGE="${BAKE_SOURCE:-ghcr.io/cirruslabs/ubuntu:latest}"
 readonly DEST_NAME="${1:-ubuntu}"
 readonly BAKE_CPU="${BAKE_CPU:-6}"
 readonly BAKE_MEM_MB="${BAKE_MEM_MB:-8192}"
@@ -26,7 +25,7 @@ readonly INSTALL_SCRIPT="$HERE/bake/ubuntu-install.sh"
 command -v sshpass >/dev/null \
   || { echo "sshpass not found — brew install sshpass" >&2; exit 1; }
 command -v tart >/dev/null \
-  || { echo "tart not found — brew install cirruslabs/cli/tart" >&2; exit 1; }
+  || { echo "tart not found. Install openai/tools/tart with Homebrew." >&2; exit 1; }
 [[ -f "$INSTALL_SCRIPT" ]] \
   || { echo "missing $INSTALL_SCRIPT" >&2; exit 1; }
 
