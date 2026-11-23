@@ -52,3 +52,10 @@ To rebuild, stop the watcher and wait until the runners are idle.
 5. Restart the watcher with `bakery watch`.
 
 Ephemeral runners clone the tools from the golden. Runner provisioning does not install them.
+
+## Fresh macOS runners
+
+The bake boots each selected iOS simulator, waits for boot completion, and shuts it down.
+Each simulator command has a three-minute limit. Images without iOS devices skip this step.
+
+See [Guest readiness](guest-readiness.md) for clone admission, diagnostics, and deployment.
