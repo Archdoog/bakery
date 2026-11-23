@@ -161,14 +161,12 @@ pub fn provision(args: ProvisionArgs<'_>) -> Result<()> {
         &format!("{}@{}:{}", args.user, args.host, remote_path),
     )?;
 
-    if args.kind == "macos" {
-        let readiness = args.scripts_dir.join("macos-readiness.py");
-        scp(
-            args.password,
-            &readiness,
-            &format!("{}@{}:/tmp/bakery-readiness.py", args.user, args.host),
-        )?;
-    }
+    let readiness = args.scripts_dir.join("guest-readiness.py");
+    scp(
+        args.password,
+        &readiness,
+        &format!("{}@{}:/tmp/bakery-readiness.py", args.user, args.host),
+    )?;
 
     let labels_csv = args.labels.join(",");
     let remote_cmd = format!(

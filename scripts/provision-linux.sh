@@ -24,6 +24,9 @@ sudo ./svc.sh uninstall 2>/dev/null || true
 pkill -f Runner.Listener || true
 sleep 1
 
+mkdir -p "$HOME/bakery-diagnostics"
+python3 /tmp/bakery-readiness.py --boot-only 2>&1 | tee "$HOME/bakery-diagnostics/startup.log"
+
 INSTALLED_VERSION="$(./bin/Runner.Listener --version 2>/dev/null || true)"
 if [[ ! -x ./config.sh || "$INSTALLED_VERSION" != "$VERSION" ]]; then
   curl -fsSL -o runner.tar.gz \
@@ -38,6 +41,8 @@ fi
 
 # config.sh refuses if the runner is still configured locally; force-clean.
 rm -f .runner .credentials .credentials_rsaparams
+
+python3 /tmp/bakery-readiness.py 2>&1 | tee -a "$HOME/bakery-diagnostics/startup.log"
 
 ./config.sh \
   --url    "https://github.com/${ORG}" \

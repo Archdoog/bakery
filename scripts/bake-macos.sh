@@ -99,7 +99,7 @@ echo ">>> running installer"
 ssh_run "$IP" "chmod +x /tmp/macos-install.sh && /tmp/macos-install.sh"
 
 echo ">>> initializing simulator services and waiting for host recovery"
-scp_to "$IP" "$HERE/macos-readiness.py" "/tmp/bakery-readiness.py"
+scp_to "$IP" "$HERE/guest-readiness.py" "/tmp/bakery-readiness.py"
 # shellcheck disable=SC2016
 ssh_run "$IP" 'mkdir -p "$HOME/bakery-diagnostics"; set -o pipefail; python3 /tmp/bakery-readiness.py 2>&1 | tee "$HOME/bakery-diagnostics/bake.log"'
 
