@@ -52,3 +52,25 @@ To rebuild, stop the watcher and wait until the runners are idle.
 5. Restart the watcher with `bakery watch`.
 
 Ephemeral runners clone the tools from the golden. Runner provisioning does not install them.
+
+## Fresh macOS runners
+
+The bake boots each selected iOS simulator, waits for boot completion, and shuts it down.
+Each simulator command has a three-minute limit. Images without iOS devices skip this step.
+
+Provisioning repeats this initialization before runner registration.
+It then requires three host-load samples at or below twice the guest CPU count.
+Samples occur five seconds apart. The recovery limit is fifteen minutes.
+A timeout stops provisioning. The watcher can replace the failed clone on its next attempt.
+
+Provisioning also compares the guest CPU count and physical memory with the fleet configuration.
+A mismatch stops registration. Recycle an idle runner after you change its resource settings.
+
+`~/bakery-diagnostics/bake.log` and `startup.log` record image identity, configured resources, actual resources, boot time, Xcode version, and resource diagnostics.
+The bake has no runner identity. The startup log includes the image fingerprint and Bakery version.
+Ephemeral replacement archives these logs with the runner diagnostics under the host's `logs/` directory.
+A failed provisioning attempt retains its VM address so replacement can archive its startup log.
+
+Rebuild the golden to add bake initialization. Install the updated Bakery binary and scripts on each host before recycling idle runners.
+The startup log identifies which fleet configuration and image served a job.
+App installation, simulator test preferences, and backend fixtures remain workflow responsibilities.

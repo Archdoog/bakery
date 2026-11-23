@@ -120,6 +120,16 @@ pub(crate) fn bring_up(cfg: &FleetConfig, g: &RunnerGroup, name: &str, pat: &str
     let runner_version = github::resolve_runner_version(&cfg.runner_version, pat)?;
     println!("[{name}] provisioning runner version {runner_version}");
     let token = github::registration_token(&cfg.github.org, pat)?;
+    let metadata = serde_json::json!({
+        "runner": name, "image": g.image, "golden_fingerprint": golden_fp,
+        "cpu": g.resources.cpu, "memory_gb": g.resources.memory_gb,
+        "bakery_version": env!("CARGO_PKG_VERSION"),
+    })
+    .to_string();
+    state_write(
+        name,
+        &build_state(g, name, pid, &guest_ip, golden_fp.as_deref()),
+    )?;
     provision::provision(provision::ProvisionArgs {
         kind: g.kind.as_str(),
         host: &guest_ip,
@@ -131,13 +141,10 @@ pub(crate) fn bring_up(cfg: &FleetConfig, g: &RunnerGroup, name: &str, pat: &str
         labels: &g.labels,
         ephemeral: g.ephemeral,
         runner_version: &runner_version,
+        metadata: &metadata,
         scripts_dir: &scripts_dir(),
     })?;
 
-    state_write(
-        name,
-        &build_state(g, name, pid, &guest_ip, golden_fp.as_deref()),
-    )?;
     if g.ephemeral {
         println!("[{name}] ephemeral runner service started");
         return Ok(());

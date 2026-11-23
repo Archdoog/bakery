@@ -79,6 +79,9 @@ fi
 # further renames the updater invents.
 rm -f .runner* .credentials*
 
+mkdir -p "$HOME/bakery-diagnostics"
+python3 /tmp/bakery-readiness.py 2>&1 | tee "$HOME/bakery-diagnostics/startup.log"
+
 ./config.sh \
   --url    "https://github.com/${ORG}" \
   --token  "${TOKEN}" \

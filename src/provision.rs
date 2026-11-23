@@ -140,6 +140,7 @@ pub struct ProvisionArgs<'a> {
     pub labels: &'a [String],
     pub ephemeral: bool,
     pub runner_version: &'a str,
+    pub metadata: &'a str,
     pub scripts_dir: &'a Path,
 }
 
@@ -160,10 +161,20 @@ pub fn provision(args: ProvisionArgs<'_>) -> Result<()> {
         &format!("{}@{}:{}", args.user, args.host, remote_path),
     )?;
 
+    if args.kind == "macos" {
+        let readiness = args.scripts_dir.join("macos-readiness.py");
+        scp(
+            args.password,
+            &readiness,
+            &format!("{}@{}:/tmp/bakery-readiness.py", args.user, args.host),
+        )?;
+    }
+
     let labels_csv = args.labels.join(",");
     let remote_cmd = format!(
-        "chmod +x {remote} && {remote} {org} {token} {name} {labels} {ver} {ephemeral}",
+        "chmod +x {remote} && BAKERY_RUNNER_METADATA={metadata} {remote} {org} {token} {name} {labels} {ver} {ephemeral}",
         remote = remote_path,
+        metadata = shell_quote(args.metadata),
         org = shell_quote(args.org),
         token = shell_quote(args.token),
         name = shell_quote(args.name),
@@ -278,7 +289,7 @@ pub fn archive_logs(host: &str, user: &str, password: &str, destination: &Path) 
         })?;
     let status = guest_command("ssh", password)
         .arg(format!("{user}@{host}"))
-        .arg("tar -czf - -C ~/actions-runner _diag")
+        .arg(ARCHIVE_LOGS_COMMAND)
         .stdout(file)
         .status()
         .map_err(|source| ProvisionError::Spawn {
@@ -292,4 +303,53 @@ pub fn archive_logs(host: &str, user: &str, password: &str, destination: &Path) 
         });
     }
     Ok(())
+}
+
+const ARCHIVE_LOGS_COMMAND: &str = r#"set --; for diagnostic_dir in actions-runner/_diag bakery-diagnostics; do if [ -d "$HOME/$diagnostic_dir" ]; then set -- "$@" "$diagnostic_dir"; fi; done; tar -czf - -C "$HOME" -T /dev/null "$@""#;
+
+#[cfg(test)]
+mod diagnostic_tests {
+    use super::ARCHIVE_LOGS_COMMAND;
+    use std::{fs, process::Command};
+
+    #[test]
+    fn archives_startup_logs_without_runner_registration() {
+        let home = tempfile::tempdir().unwrap();
+        fs::create_dir(home.path().join("bakery-diagnostics")).unwrap();
+        fs::write(
+            home.path().join("bakery-diagnostics/startup.log"),
+            "overload",
+        )
+        .unwrap();
+        let archive = home.path().join("logs.tgz");
+        let file = fs::File::create(&archive).unwrap();
+        assert!(Command::new("sh")
+            .args(["-c", ARCHIVE_LOGS_COMMAND])
+            .env("HOME", home.path())
+            .stdout(file)
+            .status()
+            .unwrap()
+            .success());
+        let listing = Command::new("tar")
+            .arg("-tzf")
+            .arg(archive)
+            .output()
+            .unwrap();
+        assert!(listing.status.success());
+        assert!(String::from_utf8(listing.stdout)
+            .unwrap()
+            .contains("bakery-diagnostics/startup.log"));
+    }
+
+    #[test]
+    fn missing_diagnostic_directories_do_not_block_replacement() {
+        let home = tempfile::tempdir().unwrap();
+        let output = Command::new("sh")
+            .args(["-c", ARCHIVE_LOGS_COMMAND])
+            .env("HOME", home.path())
+            .output()
+            .unwrap();
+        assert!(output.status.success());
+        assert!(!output.stdout.is_empty());
+    }
 }
